@@ -1,0 +1,4 @@
+n_samples=128400
+sr=16000
+dtype=f32
+layout=row_major

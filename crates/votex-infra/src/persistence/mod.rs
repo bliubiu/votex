@@ -1,0 +1,11 @@
+pub mod config_repo;
+pub mod db;
+pub mod model_repo;
+pub mod tts_task_repo;
+pub mod asr_task_repo;
+pub mod task_repo;
+pub mod pipeline_repo;
+pub mod ocr_repo;
+pub mod download_repo;
+pub mod translation_repo;
+pub mod playback_repo;

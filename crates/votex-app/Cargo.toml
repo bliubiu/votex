@@ -1,0 +1,21 @@
+[package]
+name = "votex-app"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["ffmpeg"]
+ffmpeg = ["votex-infra/ffmpeg"]
+
+[dependencies]
+votex-domain = { workspace = true }
+votex-infra = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+encoding_rs = { workspace = true }
+tempfile = "3"

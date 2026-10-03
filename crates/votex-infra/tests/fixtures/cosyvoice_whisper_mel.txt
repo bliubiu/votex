@@ -1,0 +1,7 @@
+n_mels=128
+n_frames=803
+sr=16000
+n_fft=400
+hop=160
+dtype=f32
+layout=row_major

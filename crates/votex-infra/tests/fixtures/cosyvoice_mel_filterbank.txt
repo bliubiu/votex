@@ -1,0 +1,4 @@
+n_mels=128
+n_freqs=201
+dtype=f32
+layout=row_major

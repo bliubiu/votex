@@ -1,0 +1,15 @@
+[env]
+# whisper-rs-sys 构建时跳过 bindgen（否则需要 libclang.dll）
+WHISPER_DONT_GENERATE_BINDINGS = "1"
+
+# cmake 路径（VS Build Tools 自带 cmake，不在系统 PATH 中）
+CMAKE = "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe"
+
+# 强制所有 C++ 编译使用静态 CRT（/MT），与 sherpa_onnx_sys 预编译 /MT 一致
+CXXFLAGS = "/MT"
+
+# Rust 也使用静态 CRT，避免 RuntimeLibrary 不匹配
+[target.x86_64-pc-windows-msvc]
+rustflags = [
+    "-C", "target-feature=+crt-static",
+]

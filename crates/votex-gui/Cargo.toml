@@ -1,0 +1,18 @@
+[package]
+name = "votex-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+votex-domain = { workspace = true }
+serde_yml = { workspace = true }
+votex-app = { workspace = true }
+votex-infra = { workspace = true }
+eframe = { workspace = true }
+egui = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+rfd = "0.15"
+rodio = "0.20"
+serde = { workspace = true }
+serde_json = { workspace = true }

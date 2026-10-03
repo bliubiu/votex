@@ -1,0 +1,9 @@
+pub mod kokoro;
+pub mod indextts2;
+pub mod kokoro_g2p;
+pub mod azure_speech;
+pub mod aliyun;
+pub mod qwen3_tts;
+pub mod cosyvoice;
+pub mod qwen3_model_selector;
+pub mod voice_library;

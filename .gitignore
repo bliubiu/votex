@@ -1,0 +1,35 @@
+# ===== 构建产物 =====
+/target/
+
+# ===== 模型与运行时资产（35G+，不入库，另行分发） =====
+/models/
+
+# ===== 测试与临时产物 =====
+/tmp/*
+# 标准测试素材（集成测试硬依赖，见 docs/20 §2.6 / CHANGELOG 测试素材基准）
+!/tmp/e2e_ch1.txt
+!/tmp/novel.txt
+
+# ===== 资源与运行数据 =====
+/resource/
+/data/
+/logs/
+output/
+
+# ===== 密钥与证书 =====
+.key
+*.key
+*.pem
+*.pfx
+*.p12
+
+# ===== 本地工具目录 =====
+/.workbuddy/
+/.codegraph/
+/.omo/
+/.agents/
+
+# ===== 系统文件 =====
+Thumbs.db
+.DS_Store
+crates/votex-infra/test_*.wav

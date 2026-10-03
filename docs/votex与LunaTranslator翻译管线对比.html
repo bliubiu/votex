@@ -1,0 +1,57 @@
+<svg viewBox="0 0 680 250" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>votex 与 LunaTranslator 翻译管线环节对比</title>
+<desc>votex 管线为原文直接进翻译引擎再出译文，缺少前后处理；LunaTranslator 管线包含前处理术语占位替换、翻译引擎词典与上下文注入、后处理术语回填共五个环节。</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<text x="40" y="34" style="font-family: var(--font-sans); font-size: 12px; font-weight: 400; fill: var(--color-text-secondary)">votex 现状 — 3 个环节，术语表与前后处理缺失</text>
+
+<g>
+<rect x="40" y="50" width="90" height="56" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+<text x="85" y="78" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: #633806">原文</text>
+</g>
+<path d="M130 78 L234 78" fill="none" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arrow)"/>
+<g>
+<rect x="240" y="50" width="200" height="56" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+<text x="340" y="68" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: #633806">翻译引擎</text>
+<text x="340" y="88" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 12px; font-weight: 400; fill: #BA7517">整段送入 · 超长硬截断</text>
+</g>
+<path d="M440 78 L544 78" fill="none" stroke="#BA7517" stroke-width="1.5" marker-end="url(#arrow)"/>
+<g>
+<rect x="550" y="50" width="90" height="56" rx="8" fill="#FAEEDA" stroke="#BA7517" stroke-width="0.5"/>
+<text x="595" y="78" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: #633806">译文</text>
+</g>
+
+<text x="40" y="146" style="font-family: var(--font-sans); font-size: 12px; font-weight: 400; fill: var(--color-text-secondary)">LunaTranslator — 5 个环节，术语表贯穿全流程</text>
+
+<g>
+<rect x="40" y="160" width="60" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="70" y="188" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: #085041">原文</text>
+</g>
+<path d="M100 188 L128 188" fill="none" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#arrow)"/>
+<g>
+<rect x="134" y="160" width="110" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="189" y="178" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: #085041">前处理</text>
+<text x="189" y="198" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 12px; font-weight: 400; fill: #0F6E56">术语占位替换</text>
+</g>
+<path d="M244 188 L272 188" fill="none" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#arrow)"/>
+<g>
+<rect x="278" y="160" width="124" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="340" y="178" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: #085041">翻译引擎</text>
+<text x="340" y="198" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 12px; font-weight: 400; fill: #0F6E56">词典 + 上下文注入</text>
+</g>
+<path d="M402 188 L430 188" fill="none" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#arrow)"/>
+<g>
+<rect x="436" y="160" width="110" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="491" y="178" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: #085041">后处理</text>
+<text x="491" y="198" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 12px; font-weight: 400; fill: #0F6E56">术语回填译文</text>
+</g>
+<path d="M546 188 L574 188" fill="none" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#arrow)"/>
+<g>
+<rect x="580" y="160" width="60" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="610" y="188" text-anchor="middle" dominant-baseline="central" style="font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: #085041">译文</text>
+</g>
+</svg>

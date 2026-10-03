@@ -1,0 +1,19 @@
+[package]
+name = "votex-cli"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+votex-domain = { workspace = true }
+votex-app = { workspace = true }
+votex-infra = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yml = { workspace = true }
+tracing = { workspace = true }
+ctrlc = { workspace = true }
+rusqlite = { version = "0.34", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"

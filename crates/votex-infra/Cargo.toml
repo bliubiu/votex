@@ -1,0 +1,57 @@
+[package]
+name = "votex-infra"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["ffmpeg", "directml"]
+ffmpeg = []
+directml = ["ort/directml"]
+
+[dependencies]
+votex-domain = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yml = { workspace = true }
+sha2 = { workspace = true }
+reqwest = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+encoding_rs = { workspace = true }
+sysinfo = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+image = "0.25"
+ort = { version = "2.0.0-rc.13", features = ["ndarray", "directml", "half", "load-dynamic"] }
+ndarray = "0.17"
+tokenizers = { version = "0.21", features = ["onig"] }
+rand = "0.8"
+hound = "3.5"
+which = "7"
+tempfile = "3"
+rusqlite = { version = "0.34", features = ["bundled"] }
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
+sherpa-onnx = "1.13"
+pinyin = { version = "0.11", features = ["with_tone_num_end"] }
+regex = { workspace = true }
+once_cell = { workspace = true }
+rustfft = "6"
+realfft = "3"
+num-complex = "0.4"
+aes-gcm = { workspace = true }
+base64 = { workspace = true }
+hmac = { workspace = true }
+sha1 = { workspace = true }
+libloading = "0.8"
+half = { workspace = true }
+memmap2 = "0.9"
+zip = { workspace = true }
+quick-xml = { workspace = true }
+pdf-extract = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
