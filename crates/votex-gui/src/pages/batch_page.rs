@@ -63,7 +63,7 @@ impl BatchPage {
                         .selected_text(&state.batch.engine)
                         .show_ui(ui, |ui| {
                             ui.selectable_value(&mut state.batch.engine, "kokoro".to_string(), "Kokoro-82M");
-                            ui.selectable_value(&mut state.batch.engine, "indextts2".to_string(), "IndexTTS2");
+                            ui.selectable_value(&mut state.batch.engine, "indextts25".to_string(), "IndexTTS-2.5（粤语）");
                             ui.selectable_value(&mut state.batch.engine, "qwen3".to_string(), "Qwen3-TTS");
                             ui.selectable_value(&mut state.batch.engine, "cosyvoice3".to_string(), "CosyVoice3");
                         });
@@ -154,7 +154,7 @@ impl BatchPage {
                         if is_tts {
                             task_runner::spawn_batch_tts(tx, state.batch.input_dir.clone(), state.batch.output_dir.clone(), state.batch.engine.clone(), state.batch.voice.clone(), state.batch.speed, state.batch.format.clone(), state.batch.concurrency, cancel);
                         } else {
-                            task_runner::spawn_batch_asr(tx, state.batch.input_dir.clone(), state.batch.output_dir.clone(), state.batch.model.clone(), state.batch.language.clone(), state.batch.format.clone(), true, state.batch.concurrency);
+                            task_runner::spawn_batch_asr(tx, state.batch.input_dir.clone(), state.batch.output_dir.clone(), state.batch.model.clone(), state.batch.language.clone(), state.batch.format.clone(), true, state.batch.concurrency, cancel);
                         }
                     }
                 }

@@ -1,0 +1,23 @@
+id: paddleocr-v5-server
+name: PaddleOCR v5 Server
+kind: Ocr
+engine: PaddleOCR
+sub_dir: paddleocr-v5
+files:
+  - name: ch_PP-OCRv5_det_server.onnx
+    sha256: 0f8846b1d4bba223a2a2f9d9b44022fbc22cc019051a602b41a7fda9667e4cad
+    sources:
+      modelscope: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0/onnx/PP-OCRv5/det/ch_PP-OCRv5_det_server.onnx
+  - name: ch_PP-LCNet_x1_0_textline_ori_cls_server.onnx
+    sha256: 7d3c02ef6c7da8ae08b4347cc7695b2081aae68c325d64375724ecf39c99e743
+    sources:
+      modelscope: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0/onnx/PP-OCRv5/cls/ch_PP-LCNet_x1_0_textline_ori_cls_server.onnx
+  - name: ch_PP-OCRv5_rec_server.onnx
+    sha256: e09385400eaaaef34ceff54aeb7c4f0f1fe014c27fa8b9905d4709b65746562a
+    sources:
+      modelscope: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_server.onnx
+  - name: ppocr_keys_v1.txt
+    sha256: 28b2362ad4ab2dc38769aa72feb535e3a9ddb3fd2a7585a05920e6393b1dc7f7
+    sources:
+      github: https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v1.txt
+      gitee: https://gitee.com/paddlepaddle/PaddleOCR/raw/release/2.7/ppocr/utils/ppocr_keys_v1.txt

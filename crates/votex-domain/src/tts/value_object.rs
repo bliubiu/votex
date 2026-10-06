@@ -2,7 +2,9 @@ use crate::model::value_object::EngineKind;
 use serde::{Deserialize, Serialize};
 
 /// TTS 引擎名提示（供 CLI 报错信息复用，避免各子命令各写一份）
-pub const TTS_ENGINE_HINT: &str = "kokoro, indextts2, qwen3, cosyvoice3";
+///
+/// `indextts2`/`indextts` 仍可解析（迁移别名，归一到 IndexTTS25），但不再对外提示。
+pub const TTS_ENGINE_HINT: &str = "kokoro, indextts25, qwen3, cosyvoice3";
 
 /// 解析 TTS 引擎名（CLI / 配置的统一入口）
 ///
@@ -19,7 +21,9 @@ pub const TTS_ENGINE_HINT: &str = "kokoro, indextts2, qwen3, cosyvoice3";
 pub fn parse_tts_engine(s: &str) -> Option<EngineKind> {
     match s.to_lowercase().as_str() {
         "kokoro" => Some(EngineKind::Kokoro),
-        "indextts2" | "indextts" => Some(EngineKind::IndexTTS2),
+        // 迁移别名：IndexTTS2 已移除，历史 CLI/配置串归一到 IndexTTS25
+        "indextts2" | "indextts" => Some(EngineKind::IndexTTS25),
+        "indextts25" | "indextts-2.5" | "indextts2.5" => Some(EngineKind::IndexTTS25),
         "qwen3" | "qwen3-tts" | "qwen3tts" => Some(EngineKind::Qwen3Tts),
         "cosyvoice3" | "cosyvoice" => Some(EngineKind::CosyVoice3),
         "azure-tts" | "azuretts" => Some(EngineKind::AzureTts),
@@ -635,8 +639,9 @@ mod tests {
     fn parse_tts_engine_四个CLI引擎串全部可解析() {
         // docs/20 F62：pipeline 曾只映射 kokoro/indextts2，
         // 这里锁定 CLI 帮助文本里对外承诺的 4 个引擎串。
+        // indextts2 为迁移别名（IndexTTS2 已移除，归一到 IndexTTS25）。
         assert_eq!(parse_tts_engine("kokoro"), Some(EngineKind::Kokoro));
-        assert_eq!(parse_tts_engine("indextts2"), Some(EngineKind::IndexTTS2));
+        assert_eq!(parse_tts_engine("indextts2"), Some(EngineKind::IndexTTS25));
         assert_eq!(parse_tts_engine("qwen3"), Some(EngineKind::Qwen3Tts));
         assert_eq!(parse_tts_engine("cosyvoice3"), Some(EngineKind::CosyVoice3));
     }
@@ -646,7 +651,7 @@ mod tests {
         assert_eq!(parse_tts_engine("CosyVoice"), Some(EngineKind::CosyVoice3));
         assert_eq!(parse_tts_engine("COSYVOICE3"), Some(EngineKind::CosyVoice3));
         assert_eq!(parse_tts_engine("qwen3-tts"), Some(EngineKind::Qwen3Tts));
-        assert_eq!(parse_tts_engine("indextts"), Some(EngineKind::IndexTTS2));
+        assert_eq!(parse_tts_engine("indextts"), Some(EngineKind::IndexTTS25));
         assert_eq!(parse_tts_engine("azure-tts"), Some(EngineKind::AzureTts));
         assert_eq!(parse_tts_engine("aliyun-tts"), Some(EngineKind::AliyunTts));
     }
@@ -667,7 +672,7 @@ mod tests {
     fn parse_tts_engine_与as_str往返一致() {
         for kind in [
             EngineKind::Kokoro,
-            EngineKind::IndexTTS2,
+            EngineKind::IndexTTS25,
             EngineKind::CosyVoice3,
             EngineKind::Qwen3Tts,
             EngineKind::AzureTts,
@@ -680,7 +685,6 @@ mod tests {
             );
         }
     }
-    use super::*;
 
     // ---- 原有测试 ----
 

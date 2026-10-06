@@ -38,7 +38,7 @@ impl FireRedAsrCtcProvider {
     }
 
     /// 从模型目录加载 ONNX 模型
-    fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), AsrError> {
+    fn load_from_dir(&self, model_dir: &Path) -> Result<(), AsrError> {
         let model_path = Self::find_model_file(model_dir)?;
         let tokens_path = model_dir.join("tokens.txt");
         if !tokens_path.exists() {
@@ -63,7 +63,7 @@ impl FireRedAsrCtcProvider {
             AsrError::LoadFailed("创建 FireRedASR CTC 识别器失败".to_string())
         })?;
 
-        *self.recognizer.lock().unwrap() = Some(recognizer);
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = Some(recognizer);
 
         tracing::info!("FireRedASR CTC ONNX 引擎加载完成 (目录: {:?})", model_dir);
         Ok(())
@@ -141,13 +141,13 @@ impl AsrProvider for FireRedAsrCtcProvider {
         EngineKind::FireRedAsr
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), AsrError> {
+    fn load(&self, model: &Model) -> Result<(), AsrError> {
         let model_dir = Self::find_model_dir(model)?;
         self.load_from_dir(&model_dir)
     }
 
-    fn unload(&mut self) -> Result<(), AsrError> {
-        *self.recognizer.lock().unwrap() = None;
+    fn unload(&self) -> Result<(), AsrError> {
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = None;
         tracing::info!("FireRedASR CTC 引擎已释放");
         Ok(())
     }
@@ -157,7 +157,7 @@ impl AsrProvider for FireRedAsrCtcProvider {
         audio: &AudioData,
         _params: &AsrParams,
     ) -> Result<RecognizeOutput, AsrError> {
-        let guard = self.recognizer.lock().unwrap();
+        let guard = self.recognizer.lock().unwrap_or_else(|e| e.into_inner());
         let recognizer = guard.as_ref().ok_or(AsrError::EngineNotLoaded)?;
 
         // 转换为 16kHz 单声道 f32 PCM
@@ -202,7 +202,7 @@ impl AsrProvider for FireRedAsrCtcProvider {
     }
 
     fn is_loaded(&self) -> bool {
-        self.recognizer.lock().unwrap().is_some()
+        self.recognizer.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 }
 
@@ -238,7 +238,7 @@ impl FireRedAsrAedProvider {
     }
 
     /// 从模型目录加载 ONNX 模型
-    fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), AsrError> {
+    fn load_from_dir(&self, model_dir: &Path) -> Result<(), AsrError> {
         let encoder_path = Self::find_encoder_file(model_dir)?;
         let decoder_path = Self::find_decoder_file(model_dir)?;
         let tokens_path = model_dir.join("tokens.txt");
@@ -265,7 +265,7 @@ impl FireRedAsrAedProvider {
             AsrError::LoadFailed("创建 FireRedASR AED 识别器失败".to_string())
         })?;
 
-        *self.recognizer.lock().unwrap() = Some(recognizer);
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = Some(recognizer);
 
         tracing::info!("FireRedASR AED ONNX 引擎加载完成 (目录: {:?})", model_dir);
         Ok(())
@@ -345,13 +345,13 @@ impl AsrProvider for FireRedAsrAedProvider {
         EngineKind::FireRedAsr
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), AsrError> {
+    fn load(&self, model: &Model) -> Result<(), AsrError> {
         let model_dir = Self::find_model_dir(model)?;
         self.load_from_dir(&model_dir)
     }
 
-    fn unload(&mut self) -> Result<(), AsrError> {
-        *self.recognizer.lock().unwrap() = None;
+    fn unload(&self) -> Result<(), AsrError> {
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = None;
         tracing::info!("FireRedASR AED 引擎已释放");
         Ok(())
     }
@@ -361,7 +361,7 @@ impl AsrProvider for FireRedAsrAedProvider {
         audio: &AudioData,
         _params: &AsrParams,
     ) -> Result<RecognizeOutput, AsrError> {
-        let guard = self.recognizer.lock().unwrap();
+        let guard = self.recognizer.lock().unwrap_or_else(|e| e.into_inner());
         let recognizer = guard.as_ref().ok_or(AsrError::EngineNotLoaded)?;
 
         // 转换为 16kHz 单声道 f32 PCM
@@ -406,7 +406,7 @@ impl AsrProvider for FireRedAsrAedProvider {
     }
 
     fn is_loaded(&self) -> bool {
-        self.recognizer.lock().unwrap().is_some()
+        self.recognizer.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 }
 
@@ -467,7 +467,7 @@ mod tests {
 
     #[test]
     fn test_ctc_unload_when_not_loaded() {
-        let mut provider = FireRedAsrCtcProvider::new();
+        let provider = FireRedAsrCtcProvider::new();
         assert!(provider.unload().is_ok());
     }
 
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_aed_unload_when_not_loaded() {
-        let mut provider = FireRedAsrAedProvider::new();
+        let provider = FireRedAsrAedProvider::new();
         assert!(provider.unload().is_ok());
     }
 }

@@ -10,10 +10,10 @@ pub trait AsrProvider: Send + Sync {
     fn engine_kind(&self) -> EngineKind;
 
     /// 加载模型到内存
-    fn load(&mut self, model: &Model) -> Result<(), AsrError>;
+    fn load(&self, model: &Model) -> Result<(), AsrError>;
 
     /// 释放模型资源
-    fn unload(&mut self) -> Result<(), AsrError>;
+    fn unload(&self) -> Result<(), AsrError>;
 
     /// 识别单段音频
     fn recognize(

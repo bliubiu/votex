@@ -65,7 +65,11 @@ struct LangPair {
 pub struct NllbProvider {
     encoder: EngineState<Session>,
     decoder: EngineState<Session>,
-    tokenizer: Option<SentencePieceBpe>,
+    /// SentencePiece 分词器
+    ///
+    /// 走 `EngineState`：`TranslationProvider::load` 是 `&self`，
+    /// 裸 `Option` 无法在共享实例上写入。
+    tokenizer: EngineState<SentencePieceBpe>,
     tokenizer_config: TokenizerConfig,
     max_length: usize,
 }
@@ -75,7 +79,7 @@ impl NllbProvider {
         Self {
             encoder: EngineState::new(),
             decoder: EngineState::new(),
-            tokenizer: None,
+            tokenizer: EngineState::new(),
             tokenizer_config: default_nllb_config(),
             max_length: MAX_LENGTH,
         }
@@ -120,7 +124,7 @@ impl NllbProvider {
     /// 加载策略：
     /// 1. 优先尝试 `encoder_model_int8.onnx` / `decoder_model_int8.onnx`
     /// 2. 回退到 `encoder_model.onnx` / `decoder_model.onnx`
-    pub fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    pub fn load_from_dir(&self, model_dir: &Path) -> Result<(), TranslationError> {
         let tokenizer_path = model_dir.join("sentencepiece.bpe.model");
 
         // 尝试 INT8 量化模型（优先）
@@ -160,7 +164,7 @@ impl NllbProvider {
         if tokenizer_path.exists() {
             let sp = SentencePieceBpe::load(&tokenizer_path)
                 .map_err(|e| TranslationError::ApiError(format!("加载分词器失败: {}", e)))?;
-            self.tokenizer = Some(sp);
+            self.tokenizer.load(sp);
         } else {
             return Err(TranslationError::ModelNotLoaded);
         }
@@ -175,9 +179,11 @@ impl NllbProvider {
         text: &str,
         direction: TranslationDirection,
     ) -> Result<String, TranslationError> {
-        let tokenizer = self
-            .tokenizer
+        // 守卫必须活到整个翻译流程结束（编码 → 推理 → 解码都用到 tokenizer）。
+        let tokenizer_guard = self.tokenizer.get();
+        let tokenizer = tokenizer_guard
             .as_ref()
+            .and_then(|g| g.as_ref())
             .ok_or(TranslationError::ModelNotLoaded)?;
 
         let pair = self.direction_to_lang_pair(&direction)?;
@@ -365,17 +371,17 @@ impl TranslationProvider for NllbProvider {
         }
     }
 
-    fn load(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    fn load(&self, model_dir: &Path) -> Result<(), TranslationError> {
         self.load_from_dir(model_dir)
     }
 
-    fn unload(&mut self) {
+    fn unload(&self) {
         self.encoder.unload();
         self.decoder.unload();
     }
 
     fn is_loaded(&self) -> bool {
-        self.encoder.is_loaded() && self.decoder.is_loaded() && self.tokenizer.is_some()
+        self.encoder.is_loaded() && self.decoder.is_loaded() && self.tokenizer.is_loaded()
     }
 
     fn max_input_chars(&self) -> usize {

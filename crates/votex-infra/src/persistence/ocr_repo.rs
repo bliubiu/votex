@@ -24,9 +24,9 @@ impl SqliteOcrTaskRepository {
 
 impl OcrTaskRepository for SqliteOcrTaskRepository {
     fn find_by_id(&self, id: &TaskId) -> Option<OcrTask> {
-        let conn = self.conn.lock().ok()?;
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
         let id_str = id.as_str();
-        conn.query_row(
+        match conn.query_row(
             "SELECT data_json FROM ocr_tasks WHERE id = ?1",
             params![id_str],
             |row| {
@@ -34,13 +34,25 @@ impl OcrTaskRepository for SqliteOcrTaskRepository {
                 serde_json::from_str::<OcrTask>(&json)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
             },
-        )
-        .ok()
+        ) {
+            // 区分「查不到行」与「查询出错」——后者必须留痕，
+            // 否则调用方会误判为任务不存在而重复创建
+            Ok(v) => Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => {
+                crate::persistence::guard::log_err("ocr_tasks.find_by_id", &e);
+                None
+            }
+        }
     }
 
     fn save(&self, task: &OcrTask) -> Result<(), DomainError> {
-        let conn = self.conn.lock().map_err(|e| {
-            DomainError::Config(crate::config_err(&format!("加锁失败: {}", e)))
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
+
+        // 任务行与页面行必须同生共死。旧实现逐条自动提交，
+        // 中途崩溃会留下「有 ocr_tasks 行但 ocr_pages 残缺」的脏数据
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            DomainError::Config(crate::config_err(&format!("开启事务失败: {}", e)))
         })?;
 
         let id = task.id.as_str();
@@ -59,7 +71,7 @@ impl OcrTaskRepository for SqliteOcrTaskRepository {
             votex_domain::shared::value_object::TaskStatus::Paused => "Paused",
         };
 
-        conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO ocr_tasks (id, data_json, status, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![id, json, status_str, created, updated],
@@ -81,7 +93,7 @@ impl OcrTaskRepository for SqliteOcrTaskRepository {
                 _ => None,
             };
 
-            conn.execute(
+            tx.execute(
                 "INSERT OR REPLACE INTO ocr_pages
                     (task_id, page_index, status, blocks_json, confidence, retry_count, error_msg)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -100,36 +112,43 @@ impl OcrTaskRepository for SqliteOcrTaskRepository {
             })?;
         }
 
+        tx.commit()
+            .map_err(|e| DomainError::Config(crate::config_err(&format!("提交事务失败: {}", e))))?;
+
         tracing::debug!("OCR 任务已保存: {}", id);
         Ok(())
     }
 
     fn delete(&self, id: &TaskId) -> Result<(), DomainError> {
-        let conn = self.conn.lock().map_err(|e| {
-            DomainError::Config(crate::config_err(&format!("加锁失败: {}", e)))
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
+
+        // 页面与任务行的删除必须原子完成
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            DomainError::Config(crate::config_err(&format!("开启事务失败: {}", e)))
         })?;
 
         let id_str = id.as_str();
-        conn.execute("DELETE FROM ocr_pages WHERE task_id = ?1", params![id_str])
+        tx.execute("DELETE FROM ocr_pages WHERE task_id = ?1", params![id_str])
             .map_err(|e| DomainError::Config(crate::config_err(&format!("删除页面失败: {}", e))))?;
-        conn.execute("DELETE FROM ocr_tasks WHERE id = ?1", params![id_str])
+        tx.execute("DELETE FROM ocr_tasks WHERE id = ?1", params![id_str])
             .map_err(|e| DomainError::Config(crate::config_err(&format!("删除任务失败: {}", e))))?;
+        tx.commit()
+            .map_err(|e| DomainError::Config(crate::config_err(&format!("提交事务失败: {}", e))))?;
 
         tracing::debug!("OCR 任务已删除: {}", id);
         Ok(())
     }
 
     fn find_incomplete(&self) -> Vec<OcrTask> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
-        let mut stmt = match conn.prepare(
-            "SELECT data_json FROM ocr_tasks WHERE status IN ('Queued', 'Running', 'Paused')",
+        let mut stmt = match conn.prepare("SELECT data_json FROM ocr_tasks WHERE status IN ('Queued', 'Running', 'Paused')",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("ocr_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -138,21 +157,30 @@ impl OcrTaskRepository for SqliteOcrTaskRepository {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("ocr_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("ocr_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 
     fn list_all(&self) -> Vec<OcrTask> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
         let mut stmt = match conn.prepare("SELECT data_json FROM ocr_tasks ORDER BY created_at DESC") {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("ocr_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -161,10 +189,19 @@ impl OcrTaskRepository for SqliteOcrTaskRepository {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("ocr_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("ocr_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 
     fn update_status(
@@ -265,8 +302,14 @@ impl OcrTaskRepository for SqliteOcrTaskRepository {
             DomainError::Config(crate::config_err(&format!("序列化失败: {}", e)))
         })?;
 
+        // 主表行与页面行必须同生共死（与 save() 的事务承诺一致）：
+        // 旧实现两条语句各自自动提交，中途失败会留下主表/页面表不一致
+        let tx = conn.unchecked_transaction().map_err(|e| {
+            DomainError::Config(crate::config_err(&format!("开启事务失败: {}", e)))
+        })?;
+
         // 更新主表
-        conn.execute(
+        tx.execute(
             "UPDATE ocr_tasks SET data_json = ?1, updated_at = ?2 WHERE id = ?3",
             params![new_json, task.updated_at, id_str],
         )
@@ -284,20 +327,34 @@ impl OcrTaskRepository for SqliteOcrTaskRepository {
             PageStatus::Failed(msg) => Some(msg.as_str()),
             _ => None,
         };
-        let blocks_json = serde_json::to_string(blocks).ok();
+        // 序列化失败必须留痕并中断：静默写 NULL 会把已识别的结果弄丢
+        let blocks_json = match serde_json::to_string(blocks) {
+            Ok(json) => Some(json),
+            Err(_) if blocks.is_empty() => None,
+            Err(e) => {
+                return Err(DomainError::Config(crate::config_err(&format!(
+                    "页面识别结果序列化失败: {}",
+                    e
+                ))));
+            }
+        };
         let confidence = if blocks.is_empty() {
             None
         } else {
             Some(blocks.iter().map(|b| b.confidence).sum::<f32>() / blocks.len() as f32)
         };
 
-        conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO ocr_pages
                 (task_id, page_index, status, blocks_json, confidence, retry_count, error_msg)
-             VALUES (?1, ?2, ?3, ?4, ?5, (SELECT retry_count FROM ocr_pages WHERE task_id=?1 AND page_index=?2), ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?5,
+                     COALESCE((SELECT retry_count FROM ocr_pages WHERE task_id=?1 AND page_index=?2), 0), ?6)",
             params![id_str, page_index as i64, status_str, blocks_json, confidence, error_msg],
         )
         .map_err(|e| DomainError::Config(crate::config_err(&format!("更新页面失败: {}", e))))?;
+
+        tx.commit()
+            .map_err(|e| DomainError::Config(crate::config_err(&format!("提交事务失败: {}", e))))?;
 
         Ok(())
     }

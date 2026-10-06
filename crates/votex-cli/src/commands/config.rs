@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::path::Path;
-use votex_infra::config::loader::ConfigLoader;
+use votex_app::platform::config as config_io;
 use votex_domain::config::value_object::AppConfig;
 
 use crate::commands::root::ConfigAction;
@@ -16,7 +16,7 @@ pub fn handle(action: &ConfigAction, config_path: &Path) -> Result<()> {
 
 /// 显示当前配置
 fn show(config_path: &Path) -> Result<()> {
-    let config = ConfigLoader::from_file(config_path)?;
+    let config = config_io::load_config(config_path)?;
     let yaml = serde_yml::to_string(&config)
         .map_err(|e| anyhow::anyhow!("序列化配置失败: {}", e))?;
     println!("配置文件: {}", config_path.display());
@@ -27,9 +27,9 @@ fn show(config_path: &Path) -> Result<()> {
 
 /// 设置配置项
 fn set(config_path: &Path, key: &str, value: &str) -> Result<()> {
-    let mut config = ConfigLoader::from_file(config_path)?;
+    let mut config = config_io::load_config(config_path)?;
     apply_set(&mut config, key, value)?;
-    ConfigLoader::save_to_file(&config, config_path)?;
+    config_io::save_config(&config, config_path)?;
     println!("已设置 {} = {}", key, value);
     println!("配置文件: {}", config_path.display());
     Ok(())
@@ -38,7 +38,7 @@ fn set(config_path: &Path, key: &str, value: &str) -> Result<()> {
 /// 重置为默认配置
 fn reset(config_path: &Path) -> Result<()> {
     let config = AppConfig::default();
-    ConfigLoader::save_to_file(&config, config_path)?;
+    config_io::save_config(&config, config_path)?;
     println!("已重置为默认配置");
     println!("配置文件: {}", config_path.display());
     Ok(())

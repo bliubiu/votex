@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
+use votex_domain::config::value_object::DownloadConfig;
 use votex_domain::model::entity::Model;
 use votex_domain::model::registry::ModelRegistryEntry;
 use votex_domain::model::value_object::{
@@ -14,13 +15,59 @@ use votex_infra::download::mirror_resolver::MirrorResolver;
 pub struct ModelUseCase {
     models_dir: PathBuf,
     registry: Vec<ModelRegistryEntry>,
+    /// 下载配置（超时 / 断点续传）
+    ///
+    /// 旧实现下载时用 `Downloader` 的硬编码超时，
+    /// `application.yml` 的 `models.download.timeout` 与 `resume` 均无消费者。
+    download_config: DownloadConfig,
+}
+
+/// 进程级默认下载配置
+///
+/// 由 CLI / GUI 启动时从 `application.yml` 写入，供未显式传配置的
+/// `ModelUseCase::new` 使用。避免为传递两项配置而改动全部 10 处构造点。
+static GLOBAL_DOWNLOAD_CONFIG: std::sync::OnceLock<DownloadConfig> = std::sync::OnceLock::new();
+
+/// 设置进程级默认下载配置
+///
+/// 应在应用启动时（读取 `application.yml` 之后）调用一次。
+/// 后设置者不生效（`OnceLock` 语义），符合「配置只读一次」的预期。
+pub fn set_global_download_config(config: DownloadConfig) {
+    let timeout = config.timeout;
+    if GLOBAL_DOWNLOAD_CONFIG.set(config).is_err() {
+        tracing::debug!("下载配置已初始化，忽略后续设置（timeout={timeout}）");
+    } else {
+        tracing::info!("下载配置已生效: timeout={}s, resume={}", timeout, GLOBAL_DOWNLOAD_CONFIG.get().map(|c| c.resume).unwrap_or(true));
+    }
+}
+
+/// 获取进程级默认下载配置
+pub fn global_download_config() -> DownloadConfig {
+    GLOBAL_DOWNLOAD_CONFIG
+        .get()
+        .cloned()
+        .unwrap_or_default()
 }
 
 impl ModelUseCase {
+    /// 以默认下载配置构造
+    ///
+    /// 若此前调用过 [`set_global_download_config`]，则使用该配置；
+    /// 否则退回 `DownloadConfig::default()`。
     pub fn new(models_dir: &Path, registry: Vec<ModelRegistryEntry>) -> Self {
+        Self::with_config(models_dir, registry, global_download_config())
+    }
+
+    /// 指定下载配置构造
+    pub fn with_config(
+        models_dir: &Path,
+        registry: Vec<ModelRegistryEntry>,
+        download_config: DownloadConfig,
+    ) -> Self {
         Self {
             models_dir: models_dir.to_path_buf(),
             registry,
+            download_config,
         }
     }
 
@@ -50,7 +97,9 @@ impl ModelUseCase {
             source_name: String::new(),
         });
 
-        let downloaded_files = Downloader::download_files(&files, &self.models_dir, on_progress)?;
+        // 按配置构造下载器：超时与断点续传开关来自 application.yml
+        let downloader = Downloader::with_config(&self.download_config)?;
+        let downloaded_files = downloader.download_files(&files, &self.models_dir, on_progress)?;
 
         for path in &downloaded_files {
             model.file_paths.push(path.clone());
@@ -97,7 +146,7 @@ impl ModelUseCase {
 
         let result = match model.engine {
             EngineKind::Kokoro
-            | EngineKind::IndexTTS2
+            | EngineKind::IndexTTS25
             | EngineKind::PaddleOCR
             | EngineKind::SenseVoice
             | EngineKind::Paraformer
@@ -124,13 +173,41 @@ impl ModelUseCase {
         }
     }
 
-    /// 释放模型资源
+    /// 释放模型资源（真实释放引擎会话）
+    ///
+    /// 引擎会话懒加载于进程级单例（shared_tts/shared_asr/shared_ocr），
+    /// 此前只把状态改回 Ready、不释放任何会话——GUI 显示「已释放」但内存不降。
+    /// unload 后下次合成/识别会自动重新加载模型。
     pub fn unload_model(&self, model: &mut Model) -> Result<()> {
         if !model.is_loaded() {
             anyhow::bail!("模型未加载");
         }
+
+        let release = match model.engine {
+            EngineKind::Kokoro
+            | EngineKind::Qwen3Tts
+            | EngineKind::CosyVoice3
+            | EngineKind::IndexTTS25 => {
+                crate::services::shared_cases::shared_tts().unload(model.engine)
+            }
+            EngineKind::Whisper
+            | EngineKind::SenseVoice
+            | EngineKind::Paraformer
+            | EngineKind::Qwen3Asr
+            | EngineKind::FireRedAsr
+            | EngineKind::WeNet => {
+                crate::services::shared_cases::shared_asr().unload(model.engine)
+            }
+            EngineKind::PaddleOCR | EngineKind::EasyOcr => {
+                crate::services::shared_cases::shared_ocr().unload_engine()
+            }
+            // 翻译/LLM 等引擎由 translation_runtime::release_all 统一管理
+            _ => Ok(()),
+        };
+        release?;
+
         model.status = ModelStatus::Ready;
-        tracing::info!("模型 {} 已释放", model.id);
+        tracing::info!("模型 {} 已释放（引擎会话已卸载）", model.id);
         Ok(())
     }
 
@@ -206,6 +283,9 @@ fn parse_model_kind(s: &str) -> Result<ModelKind> {
         "Asr" => Ok(ModelKind::Asr),
         "Ocr" => Ok(ModelKind::Ocr),
         "Translation" => Ok(ModelKind::Translation),
+        // 运行时依赖（ONNX Runtime 动态库）由 registry 统一管理下载与校验，
+        // 但它不是可 `load()` 的模型，因此只出现在列表中而不参与引擎分发
+        "Runtime" => Ok(ModelKind::Runtime),
         _ => anyhow::bail!("无效的模型类型: {}", s),
     }
 }
@@ -225,7 +305,9 @@ fn parse_model_kind(s: &str) -> Result<ModelKind> {
 fn parse_engine_kind(s: &str) -> Result<EngineKind> {
     match s {
         "Kokoro" => Ok(EngineKind::Kokoro),
-        "IndexTTS2" => Ok(EngineKind::IndexTTS2),
+        // 迁移别名：IndexTTS2 已移除，历史持久化串归一到 IndexTTS25
+        "IndexTTS2" => Ok(EngineKind::IndexTTS25),
+        "IndexTTS25" => Ok(EngineKind::IndexTTS25),
         "Whisper" => Ok(EngineKind::Whisper),
         "SenseVoice" => Ok(EngineKind::SenseVoice),
         "Paraformer" => Ok(EngineKind::Paraformer),
@@ -248,6 +330,8 @@ fn parse_engine_kind(s: &str) -> Result<EngineKind> {
         "Pexels" => Ok(EngineKind::Pexels),
         "Pixabay" => Ok(EngineKind::Pixabay),
         "Coverr" => Ok(EngineKind::Coverr),
+        // ===== 推理运行时 =====
+        "OnnxRuntime" => Ok(EngineKind::OnnxRuntime),
         _ => anyhow::bail!("无效的引擎类型: {}", s),
     }
 }
@@ -270,6 +354,7 @@ mod tests {
                     file_entry("kokoro-v1.0.int8.onnx", &[("github", "https://github.com/test")]),
                     file_entry("config.json", &[("huggingface", "https://hf.co/test")]),
                 ],
+                    ..Default::default()
             },
             ModelRegistryEntry {
                 id: "paddleocr-v6-tiny".into(),
@@ -281,6 +366,7 @@ mod tests {
                 files: vec![
                     file_entry("ch_PP-OCRv6_det_tiny.onnx", &[("huggingface", "https://hf.co/test")]),
                 ],
+                    ..Default::default()
             },
         ]
     }
@@ -296,6 +382,7 @@ mod tests {
             size: None,
             required: false,
             sources: map,
+                ..Default::default()
         }
     }
 
@@ -378,6 +465,7 @@ mod tests {
             sub_dir: None,
                 tokenizer: None,
             files: vec![],
+                ..Default::default()
         };
 
         let model = ModelUseCase::create_model_from_entry(&entry).unwrap();
@@ -397,6 +485,7 @@ mod tests {
             sub_dir: None,
                 tokenizer: None,
             files: vec![],
+                ..Default::default()
         };
 
         let result = ModelUseCase::create_model_from_entry(&entry);
@@ -413,6 +502,7 @@ mod tests {
             sub_dir: None,
                 tokenizer: None,
             files: vec![],
+                ..Default::default()
         };
 
         let result = ModelUseCase::create_model_from_entry(&entry);

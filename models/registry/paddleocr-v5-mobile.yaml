@@ -1,0 +1,23 @@
+id: paddleocr-v5-mobile
+name: PaddleOCR v5 Mobile
+kind: Ocr
+engine: PaddleOCR
+sub_dir: paddleocr-v5
+files:
+  - name: ch_PP-OCRv5_det_mobile.onnx
+    sha256: 4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae
+    sources:
+      modelscope: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0/onnx/PP-OCRv5/det/ch_PP-OCRv5_det_mobile.onnx
+  - name: ch_ppocr_mobile_v2.0_cls_mobile.onnx
+    sha256: e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c
+    sources:
+      modelscope: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx
+  - name: ch_PP-OCRv5_rec_mobile.onnx
+    sha256: 5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5
+    sources:
+      modelscope: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile.onnx
+  - name: ppocr_keys_v1.txt
+    sha256: 28b2362ad4ab2dc38769aa72feb535e3a9ddb3fd2a7585a05920e6393b1dc7f7
+    sources:
+      github: https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/release/2.7/ppocr/utils/ppocr_keys_v1.txt
+      gitee: https://gitee.com/paddlepaddle/PaddleOCR/raw/release/2.7/ppocr/utils/ppocr_keys_v1.txt

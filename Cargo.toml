@@ -29,6 +29,35 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
+# ============ 发布构建优化 ============
+# AGENTS.md 约束「必须编译配置优化，从源头减小体积」+「单二进制分发，不依赖外部运行时」。
+# 此前完全没有 release profile 配置，发布二进制保留了全部调试符号与未优化代码。
+
+[profile.release]
+# 最小体积优先（单二进制分发场景下体积比极限性能更重要）
+opt-level = "z"
+# 跨 crate 链接时优化，进一步消除死代码
+lto = true
+# 单代码生成单元，换取更充分的优化（代价是编译变慢）
+codegen-units = 1
+# 剥离调试符号
+strip = true
+# 崩溃即终止：已确认全项目未使用 catch_unwind，
+# 可安全启用并省去展开表体积；同时避免「一个线程 panic 后毒化互斥锁
+# 导致连锁崩溃」这类难以诊断的半死状态
+panic = "abort"
+
+# 开发期依赖（构建脚本、过程宏）仍需快速编译，不参与最终产物体积
+[profile.release.build-override]
+opt-level = 0
+codegen-units = 256
+
+# 发布候选：需要定位线上问题时使用（保留符号，其余优化同 release）
+[profile.release-debug]
+inherits = "release"
+strip = false
+debug = true
+
 [workspace.dependencies]
 # 领域层
 uuid = { version = "1", features = ["v4"] }

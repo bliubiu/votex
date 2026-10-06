@@ -2,6 +2,7 @@
 use std::time::Instant;
 use ort::session::Session;
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test minimal_ort_test --features slow-models")]
 #[test]
 fn test_minimal_ort_load_v11() {
     let model_dir = {
@@ -45,6 +46,7 @@ fn test_minimal_ort_load_v11() {
     eprintln!("????????? {:.1}s", t0.elapsed().as_secs_f64());
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test minimal_ort_test --features slow-models")]
 #[test]
 fn test_kokoro_provider_load() {
     use votex_infra::tts::kokoro::KokoroProvider;
@@ -70,7 +72,7 @@ fn test_kokoro_provider_load() {
         EngineKind::Kokoro,
     );
 
-    let mut provider = KokoroProvider::new();
+    let provider = KokoroProvider::new();
     let t0 = Instant::now();
 
     match provider.load(&model) {

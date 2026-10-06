@@ -111,8 +111,13 @@ fn registry_声明文件与磁盘一致() {
         if ONLINE_MODEL_WHITELIST.contains(&entry.id.as_str()) {
             continue;
         }
-        let leaf = entry.sub_dir.as_deref().unwrap_or(&entry.id);
-        let dir = models_dir.join(kind_dir(&entry.kind)).join(leaf);
+        // 与 ModelRegistryEntry::dir 推导一致：target_dir 优先于 kind + sub_dir
+        let dir = match entry.target_dir.as_deref() {
+            Some(d) => models_dir.join(d),
+            None => models_dir
+                .join(kind_dir(&entry.kind))
+                .join(entry.sub_dir.as_deref().unwrap_or(&entry.id)),
+        };
         if !dir.is_dir() {
             missing.push(format!(
                 "[{}] {} 模型目录不存在: {}",
@@ -155,6 +160,7 @@ fn registry_engine字段都在映射白名单内() {
         // ==== 与 votex-app/src/use_case/model_use_case.rs::parse_engine_kind 保持一致 ====
         "Kokoro",
         "IndexTTS2",
+        "IndexTTS25",
         "Whisper",
         "SenseVoice",
         "Paraformer",
@@ -176,6 +182,7 @@ fn registry_engine字段都在映射白名单内() {
         "Pexels",
         "Pixabay",
         "Coverr",
+        "OnnxRuntime",
     ];
 
     let (ok, errs) = parse_all();

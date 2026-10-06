@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use votex_domain::model::registry::ModelRegistryEntry;
+use votex_domain::model::registry::{ArchiveSpec, ModelRegistryEntry};
 
 /// 下载文件配置
 #[derive(Debug, Clone)]
@@ -9,6 +9,11 @@ pub struct DownloadFile {
     pub expected_sha256: Option<String>,
     /// 预期文件大小（字节），用于校验下载完整性
     pub expected_size: Option<u64>,
+    /// 下载内容为压缩包时，指定从中提取的成员文件
+    ///
+    /// `expected_sha256` / `expected_size` 在该场景下对应**解压后的目标文件**，
+    /// 而非压缩包本身——校验的是真正要加载执行的文件。
+    pub archive: Option<ArchiveSpec>,
 }
 
 /// 镜像源解析器
@@ -27,13 +32,26 @@ impl MirrorResolver {
     /// # 返回
     /// 平铺的 `Vec<DownloadFile>`，同一文件的多个源按优先级排列，
     /// 不同文件之间保持清单中的顺序。
+    ///
+    /// 文件条目若声明了 `platforms`（如 ONNX Runtime 的三个平台产物），
+    /// 仅在匹配当前操作系统时才会进入结果，避免下载用不上的库。
     pub fn resolve(entry: &ModelRegistryEntry, priority: &[String]) -> Vec<DownloadFile> {
         let storage_dir = entry.storage_dir();
         let mut files = Vec::new();
 
         for file_entry in &entry.files {
+            if !file_entry.matches_current_platform() {
+                tracing::debug!(
+                    "跳过非当前平台文件: {}（仅适用于 {:?}）",
+                    file_entry.name,
+                    file_entry.platforms.as_deref().unwrap_or(&[])
+                );
+                continue;
+            }
+
             let dest = PathBuf::from(&storage_dir).join(&file_entry.name);
             let sha256 = file_entry.sha256.clone();
+            let archive = file_entry.archive.clone();
 
             // 按优先级顺序收集该文件的各镜像 URL
             let mut has_source = std::collections::HashSet::new();
@@ -49,6 +67,7 @@ impl MirrorResolver {
                         dest: dest.clone(),
                         expected_sha256: sha256.clone(),
                         expected_size,
+                        archive: archive.clone(),
                     });
                     has_source.insert(mirror_name.as_str());
                     added = true;
@@ -63,6 +82,7 @@ impl MirrorResolver {
                         dest: dest.clone(),
                         expected_sha256: sha256.clone(),
                         expected_size,
+                        archive: archive.clone(),
                     });
                     added = true;
                 }
@@ -129,6 +149,7 @@ mod tests {
                     size: None,
                     required: false,
                     sources: sources1,
+                    ..Default::default()
                 },
                 ModelFileEntry {
                     name: "config.json".into(),
@@ -136,8 +157,10 @@ mod tests {
                     size: None,
                     required: false,
                     sources: sources2,
+                    ..Default::default()
                 },
             ],
+            ..Default::default()
         }
     }
 
@@ -195,7 +218,9 @@ mod tests {
                 size: None,
                 required: false,
                 sources,
+                ..Default::default()
             }],
+            ..Default::default()
         };
 
         let priority: Vec<String> = vec!["huggingface".into()];
@@ -228,7 +253,9 @@ mod tests {
                 size: None,
                 required: false,
                 sources,
+                ..Default::default()
             }],
+            ..Default::default()
         };
 
         let priority: Vec<String> = vec!["huggingface".into()];

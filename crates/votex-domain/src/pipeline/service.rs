@@ -76,8 +76,8 @@ impl ProgressiveQualityAdvisor {
         if has_tts {
             return Some(QualityUpgrade {
                 current_engine: "Kokoro-82M".to_string(),
-                suggested_engine: "IndexTTS2".to_string(),
-                reason: "IndexTTS2 支持方言，语音更自然".to_string(),
+                suggested_engine: "IndexTTS-2.5".to_string(),
+                reason: "IndexTTS-2.5 原生支持粤语等方言，语音更自然".to_string(),
             });
         }
 

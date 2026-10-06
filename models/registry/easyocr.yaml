@@ -1,0 +1,23 @@
+id: easyocr
+name: EasyOCR
+kind: Ocr
+engine: EasyOcr
+sub_dir: EasyOCR
+files:
+  - name: craft_det.onnx
+    sha256: c3475aee7a17cfb370bdad25670ec0b536103d7cd33c5dff1915750a27fbcafe
+    sources:
+      modelscope: https://modelscope.cn/models/itextresearch/itext-EasyOCR-craft_mlt_25k/resolve/main/itext-EasyOCR-craft_mlt_25k.onnx
+      huggingface: https://huggingface.co/itextresearch/itext-EasyOCR-craft_mlt_25k/resolve/main/itext-EasyOCR-craft_mlt_25k.onnx
+      hf-mirror: https://hf-mirror.com/itextresearch/itext-EasyOCR-craft_mlt_25k/resolve/main/itext-EasyOCR-craft_mlt_25k.onnx
+  - name: recognizer.onnx
+    sha256: 2cd505a3c81004c23761e780c0de6f818ea5e96e0612797bb2b70e9220545764
+    sources:
+      modelscope: https://modelscope.cn/models/itextresearch/itext-EasyOCR-zh_sim_g2/resolve/main/itext-EasyOCR-zh_sim_g2.onnx
+      huggingface: https://huggingface.co/itextresearch/itext-EasyOCR-zh_sim_g2/resolve/main/itext-EasyOCR-zh_sim_g2.onnx
+      hf-mirror: https://hf-mirror.com/itextresearch/itext-EasyOCR-zh_sim_g2/resolve/main/itext-EasyOCR-zh_sim_g2.onnx
+  - name: char_dict.txt
+    sha256: 8ae32dc4e81b90a03b0c5ff3e15f99aab8fad7952de307df4bd9ef1824dae928
+    sources:
+      modelscope: https://modelscope.cn/models/JaidedAI/EasyOCR/resolve/master/easyocr/character/ch_sim_char.txt
+      github: https://raw.githubusercontent.com/JaidedAI/EasyOCR/master/easyocr/character/ch_sim_char.txt

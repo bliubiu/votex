@@ -53,7 +53,7 @@ impl VideoPage {
                     .selected_text(&state.video.tts_engine)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut state.video.tts_engine, "kokoro".to_string(), "Kokoro-82M");
-                        ui.selectable_value(&mut state.video.tts_engine, "indextts2".to_string(), "IndexTTS2");
+                        ui.selectable_value(&mut state.video.tts_engine, "indextts25".to_string(), "IndexTTS-2.5（粤语）");
                         ui.selectable_value(&mut state.video.tts_engine, "qwen3".to_string(), "Qwen3-TTS");
                         ui.selectable_value(&mut state.video.tts_engine, "cosyvoice3".to_string(), "CosyVoice3");
                     });
@@ -93,8 +93,12 @@ impl VideoPage {
             ui.horizontal(|ui| {
                 if state.video.is_running {
                     if PageLayout::danger_button(ui, "停止", true).clicked() {
-                        state.video.is_running = false;
-                        state.video.progress_text = "已停止".to_string();
+                        // 置位取消令牌，后台任务在阶段边界中断，
+                        // 终态由后台 Error 事件统一复位（与 TTS 页一致）
+                        if let Some(ref token) = state.video.cancel_token {
+                            token.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        state.video.progress_text = "正在停止...".to_string();
                     }
                 } else {
                     if PageLayout::primary_button(ui, "▶ 生成视频", true).clicked() {
@@ -104,7 +108,10 @@ impl VideoPage {
                         state.video.result_message.clear();
 
                         let tx = state.task_tx.as_ref().unwrap().clone();
-                        crate::task_runner::spawn_video(tx, state.video.script.clone(), state.video.output_path.clone(), state.video.tts_engine.clone(), state.video.tts_voice.clone(), 1.0, true, "srt".to_string(), "whisper-base".to_string(), "1920x1080".to_string(), None, None);
+                        // 取消令牌由页面持有并复用，停止按钮才能拿到同一个令牌
+                        let token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        state.video.cancel_token = Some(std::sync::Arc::clone(&token));
+                        crate::task_runner::spawn_video(tx, state.video.script.clone(), state.video.output_path.clone(), state.video.tts_engine.clone(), state.video.tts_voice.clone(), 1.0, true, "srt".to_string(), "whisper-base".to_string(), "1920x1080".to_string(), None, None, Some(token));
                     }
                 }
             });

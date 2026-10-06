@@ -8,6 +8,15 @@ CMAKE = "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\Commo
 # 强制所有 C++ 编译使用静态 CRT（/MT），与 sherpa_onnx_sys 预编译 /MT 一致
 CXXFLAGS = "/MT"
 
+# 让 cargo run / cargo test 启动的进程也能定位自带 ONNX Runtime。
+# 部分单元测试直接调用 ort API（如构造张量）而不经过 OrtSessionFactory，
+# 此时 ensure_ort_dylib_path() 无从触发，ort 会按默认名 onnxruntime.dll
+# 在系统搜索路径查找而失败（LoadLibraryExW 126）。
+# force=false：用户已设置时不覆盖；relative=true：相对工作区根解析。
+# 该值指向的文件不存在时会被 ensure_ort_dylib_path 忽略并按当前平台重新查找，
+# 因此在 Linux/macOS 上不会误用 Windows 文件名。
+ORT_DYLIB_PATH = { value = "models/runtime/onnxruntime.dll", force = false, relative = true }
+
 # Rust 也使用静态 CRT，避免 RuntimeLibrary 不匹配
 [target.x86_64-pc-windows-msvc]
 rustflags = [

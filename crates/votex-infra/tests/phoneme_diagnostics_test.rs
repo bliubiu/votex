@@ -32,6 +32,10 @@ static VOCAB: LazyLock<HashMap<char, i64>> = LazyLock::new(|| {
 
 #[test]
 fn phoneme_vocab_diagnostics() {
+    if load_config_json().is_none() {
+        eprintln!("⚠ kokoro-82m/config.json 不存在，跳过诊断（先执行模型下载）");
+        return;
+    }
     let texts = [
         "????????????",
         "??",

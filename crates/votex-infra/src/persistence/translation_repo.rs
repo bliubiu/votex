@@ -74,7 +74,7 @@ impl SqliteTranslationRepository {
         source_text: &str,
         glossary_fp: u64,
     ) -> Option<String> {
-        let conn = self.conn.lock().ok()?;
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
         let mut stmt = conn
             .prepare(
@@ -95,17 +95,16 @@ impl SqliteTranslationRepository {
 
     /// 列出最近的翻译记录
     pub fn list_recent(&self, limit: usize) -> Vec<TranslationRecord> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
-        let mut stmt = match conn.prepare(
-            "SELECT id, engine, direction, source_text, target_text, glossary_fp, created_at
+        let mut stmt = match conn.prepare("SELECT id, engine, direction, source_text, target_text, glossary_fp, created_at
              FROM translation_history ORDER BY id DESC LIMIT ?1",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("translation_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = stmt.query_map(params![limit as i64], |row| {
@@ -121,7 +120,13 @@ impl SqliteTranslationRepository {
         });
 
         match rows {
-            Ok(r) => r.filter_map(|x| x.ok()).collect(),
+            Ok(r) => r.filter_map(|x| match x {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("translation_repo 行解析", &e);
+                None
+            }
+        }).collect(),
             Err(_) => Vec::new(),
         }
     }
@@ -139,10 +144,7 @@ impl SqliteTranslationRepository {
 
     /// 翻译历史条数
     pub fn history_count(&self) -> usize {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return 0,
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
         conn.query_row("SELECT COUNT(*) FROM translation_history", [], |r| r.get(0))
             .unwrap_or(0)
     }
@@ -177,7 +179,7 @@ impl SqliteTranslationRepository {
 
     /// 读取翻译任务
     pub fn load_task(&self, id: &str) -> Option<(String, String)> {
-        let conn = self.conn.lock().ok()?;
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
         let mut stmt = conn
             .prepare("SELECT data_json, status FROM translation_tasks WHERE id = ?1")
             .ok()?;
@@ -187,21 +189,26 @@ impl SqliteTranslationRepository {
 
     /// 列出翻译任务
     pub fn list_tasks(&self) -> Vec<(String, String, String)> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
-        let mut stmt = match conn.prepare(
-            "SELECT id, data_json, status FROM translation_tasks ORDER BY created_at DESC",
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
+        let mut stmt = match conn.prepare("SELECT id, data_json, status FROM translation_tasks ORDER BY created_at DESC",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("translation_repo", &e);
+                return Vec::new();
+            }
         };
         let rows = stmt.query_map([], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         });
         match rows {
-            Ok(r) => r.filter_map(|x| x.ok()).collect(),
+            Ok(r) => r.filter_map(|x| match x {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("translation_repo 行解析", &e);
+                None
+            }
+        }).collect(),
             Err(_) => Vec::new(),
         }
     }

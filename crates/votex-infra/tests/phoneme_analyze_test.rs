@@ -69,7 +69,7 @@ fn analyze_mapping_combining_chars() {
 
     // ?? VOCAB ? 10 ???
     println!("\n=== ???? 20 ? ===");
-    for (i, (key, val)) in map.iter().enumerate().take(20) {
+    for (key, val) in map.iter().take(20) {
         println!("  {} ? {}", key, val);
     }
 

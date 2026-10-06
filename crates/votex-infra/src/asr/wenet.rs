@@ -37,7 +37,7 @@ impl WeNetProvider {
     }
 
     /// 从模型目录加载 ONNX 模型
-    fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), AsrError> {
+    fn load_from_dir(&self, model_dir: &Path) -> Result<(), AsrError> {
         let model_path = Self::find_model_file(model_dir)?;
         let tokens_path = model_dir.join("tokens.txt");
         if !tokens_path.exists() {
@@ -62,7 +62,7 @@ impl WeNetProvider {
             AsrError::LoadFailed("创建 WeNet 识别器失败".to_string())
         })?;
 
-        *self.recognizer.lock().unwrap() = Some(recognizer);
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = Some(recognizer);
 
         tracing::info!("WeNet Conformer ONNX 引擎加载完成 (目录: {:?})", model_dir);
         Ok(())
@@ -141,13 +141,13 @@ impl AsrProvider for WeNetProvider {
         EngineKind::WeNet
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), AsrError> {
+    fn load(&self, model: &Model) -> Result<(), AsrError> {
         let model_dir = Self::find_model_dir(model)?;
         self.load_from_dir(&model_dir)
     }
 
-    fn unload(&mut self) -> Result<(), AsrError> {
-        *self.recognizer.lock().unwrap() = None;
+    fn unload(&self) -> Result<(), AsrError> {
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = None;
         tracing::info!("WeNet 引擎已释放");
         Ok(())
     }
@@ -157,7 +157,7 @@ impl AsrProvider for WeNetProvider {
         audio: &AudioData,
         _params: &AsrParams,
     ) -> Result<RecognizeOutput, AsrError> {
-        let guard = self.recognizer.lock().unwrap();
+        let guard = self.recognizer.lock().unwrap_or_else(|e| e.into_inner());
         let recognizer = guard.as_ref().ok_or(AsrError::EngineNotLoaded)?;
 
         // 转换为 16kHz 单声道 f32 PCM
@@ -199,7 +199,7 @@ impl AsrProvider for WeNetProvider {
     }
 
     fn is_loaded(&self) -> bool {
-        self.recognizer.lock().unwrap().is_some()
+        self.recognizer.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 }
 
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_unload_when_not_loaded() {
-        let mut provider = WeNetProvider::new();
+        let provider = WeNetProvider::new();
         assert!(provider.unload().is_ok());
     }
 }

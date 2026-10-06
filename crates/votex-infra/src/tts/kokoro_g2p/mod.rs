@@ -1,3 +1,8 @@
+//! Kokoro 中文 G2P：拼音 → IPA / 注音映射与多音字消歧。
+//!
+//! 映射表从 `models/tts/kokoro-82m-v1.1-zh/*.json` 运行时加载，
+//! 不随二进制分发；缺失时降级为不提供该能力而非崩溃。
+
 mod mapping;
 pub mod polyphone;
 

@@ -115,6 +115,12 @@ pub struct AsrState {
     pub progress_text: String,
     pub result_message: String,
     pub result_text: String,
+    /// 当前任务的取消令牌（启动按钮创建，取消按钮触发）
+    ///
+    /// 必须由页面持有并复用，不能在启动时临时 `Arc::new` 后丢弃——
+    /// 那样取消按钮拿不到同一个令牌，点了没反应，
+    /// 后台任务仍会跑完（此前的 ASR / OCR 页面就是这个 bug）。
+    pub cancel_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for AsrState {
@@ -130,6 +136,7 @@ impl Default for AsrState {
             progress_text: String::new(),
             result_message: String::new(),
             result_text: String::new(),
+            cancel_token: None,
         }
     }
 }
@@ -160,6 +167,12 @@ pub struct OcrState {
     pub task_id: String,
     pub use_batch: bool,
     pub batch_inputs: Vec<String>,
+    /// 当前任务的取消令牌（启动按钮创建，取消按钮触发）
+    ///
+    /// 必须由页面持有并复用，不能在启动时临时 `Arc::new` 后丢弃——
+    /// 那样取消按钮拿不到同一个令牌，点了没反应，
+    /// 后台任务仍会跑完（此前的 ASR / OCR 页面就是这个 bug）。
+    pub cancel_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub batch_output_dir: String,
     pub max_concurrency: usize,
 }
@@ -167,7 +180,7 @@ pub struct OcrState {
 impl Default for OcrState {
     fn default() -> Self {
         Self {
-            engine: "paddleocr-v6-tiny".to_string(),
+            engine: "paddleocr-v6-medium".to_string(),
             input_path: String::new(),
             output_path: String::new(),
             output_format: "txt".to_string(),
@@ -182,6 +195,7 @@ impl Default for OcrState {
             batch_inputs: Vec::new(),
             batch_output_dir: "ocr_output".to_string(),
             max_concurrency: 2,
+            cancel_token: None,
         }
     }
 }
@@ -257,6 +271,16 @@ pub struct SettingsState {
     pub selected_tts_engine: String,
     /// 是否显示资源建议弹窗
     pub show_resource_tip: bool,
+    // -------- 模型删除二次确认 --------
+    /// 待二次确认删除的模型 ID
+    ///
+    /// AGENTS.md 约束「禁止自动删除模型文件，必须二次确认操作」：
+    /// 点击删除按钮只登记此项，真正的文件删除在确认弹窗中完成
+    pub pending_delete: Option<String>,
+    /// 删除操作结果提示（成功或失败原因），用于界面反馈
+    pub delete_result: Option<String>,
+    /// 配置保存结果提示
+    pub config_message: Option<String>,
 }
 
 impl Default for SettingsState {
@@ -272,6 +296,9 @@ impl Default for SettingsState {
             execution_mode: "sequential".to_string(),
             selected_tts_engine: String::new(),
             show_resource_tip: false,
+            pending_delete: None,
+            delete_result: None,
+            config_message: None,
         }
     }
 }
@@ -300,6 +327,8 @@ pub struct PipelineState {
     pub engine: String,
     pub voice: String,
     pub speed: f32,
+    /// 当前任务的取消令牌（启动按钮创建，取消按钮触发）
+    pub cancel_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for PipelineState {
@@ -316,6 +345,7 @@ impl Default for PipelineState {
             engine: "kokoro".to_string(),
             voice: "zf_001".to_string(),
             speed: 1.0,
+            cancel_token: None,
         }
     }
 }
@@ -344,6 +374,8 @@ pub struct VideoState {
     pub result_message: String,
     pub translated_keyword: String,
     pub material_preview_url: String,
+    /// 当前任务的取消令牌（启动按钮创建，取消按钮触发）
+    pub cancel_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for VideoState {
@@ -361,6 +393,7 @@ impl Default for VideoState {
             result_message: String::new(),
             translated_keyword: String::new(),
             material_preview_url: String::new(),
+            cancel_token: None,
         }
     }
 }
@@ -375,7 +408,6 @@ pub struct OnboardingState {
     pub download_model: String,
     pub selected_kokoro: bool,
     pub selected_whisper_base: bool,
-    pub selected_indextts2: bool,
     pub selected_whisper_small: bool,
 }
 
@@ -389,7 +421,6 @@ impl Default for OnboardingState {
             download_model: String::new(),
             selected_kokoro: true,
             selected_whisper_base: true,
-            selected_indextts2: false,
             selected_whisper_small: false,
         }
     }
@@ -406,6 +437,8 @@ pub struct TranslationState {
     pub progress: f32,
     pub progress_text: String,
     pub result_message: String,
+    /// 当前任务的取消令牌（启动按钮创建，取消按钮触发）
+    pub cancel_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for TranslationState {
@@ -419,6 +452,7 @@ impl Default for TranslationState {
             progress: 0.0,
             progress_text: String::new(),
             result_message: String::new(),
+            cancel_token: None,
         }
     }
 }
@@ -428,6 +462,9 @@ pub struct AppState {
     pub current_page: Page,
     /// 模型文件存储根目录（从 CLI 或配置文件传入）
     pub models_dir: String,
+    /// 配置文件路径（由 bootstrap 传入；设置页读写它，
+    /// 不能写死相对路径——GUI 双击启动时 cwd 任意）
+    pub config_path: String,
     pub tts: TtsState,
     pub asr: AsrState,
     pub ocr: OcrState,
@@ -449,7 +486,7 @@ pub struct AppState {
     /// 流水线持久化仓储（可选，用于故障恢复）
     pub pipeline_repo: Option<Arc<dyn votex_domain::repository::PipelineRepository>>,
     /// 下载记录持久化仓储（可选，用于断点续传追踪）
-    pub download_repo: Option<Arc<votex_infra::persistence::download_repo::SqliteDownloadRepository>>,
+    pub download_repo: Option<Arc<dyn votex_domain::repository::DownloadRepository>>,
 }
 
 impl AppState {
@@ -459,6 +496,7 @@ impl AppState {
         Self {
             current_page: Page::Dashboard,
             models_dir: models_dir.clone(),
+            config_path: "application.yml".to_string(),
             tts: TtsState::default(),
             asr: AsrState::default(),
             ocr: OcrState::default(),
@@ -486,6 +524,11 @@ impl AppState {
 
 impl Default for AppState {
     fn default() -> Self {
-        Self::new("models".to_string())
+        // 走统一路径解析，不写死 "models" 字面量
+        Self::new(
+            votex_app::platform::paths::models_dir()
+                .display()
+                .to_string(),
+        )
     }
 }

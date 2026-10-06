@@ -34,16 +34,15 @@ impl SqliteTtsTaskRepository {
 
     /// 列出所有任务（按创建时间降序）
     pub fn list_all(&self) -> Vec<TtsTask> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
-        let mut stmt = match conn.prepare(
-            "SELECT data_json FROM tts_tasks ORDER BY created_at DESC",
+        let mut stmt = match conn.prepare("SELECT data_json FROM tts_tasks ORDER BY created_at DESC",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_task_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -52,10 +51,19 @@ impl SqliteTtsTaskRepository {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_task_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_task_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 
     /// 更新任务状态
@@ -106,9 +114,9 @@ impl SqliteTtsTaskRepository {
 
 impl TtsTaskRepository for SqliteTtsTaskRepository {
     fn find_by_id(&self, id: &TaskId) -> Option<TtsTask> {
-        let conn = self.conn.lock().ok()?;
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
         let id_str = id.as_str();
-        conn.query_row(
+        match conn.query_row(
             "SELECT data_json FROM tts_tasks WHERE id = ?1",
             params![id_str],
             |row| {
@@ -116,8 +124,16 @@ impl TtsTaskRepository for SqliteTtsTaskRepository {
                 serde_json::from_str::<TtsTask>(&json)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
             },
-        )
-        .ok()
+        ) {
+            // 区分「查不到行」与「查询出错」——后者必须留痕，
+            // 否则调用方会误判为任务不存在而重复创建
+            Ok(v) => Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_tasks.find_by_id", &e);
+                None
+            }
+        }
     }
 
     fn save(&self, task: &TtsTask) -> Result<(), DomainError> {
@@ -158,16 +174,15 @@ impl TtsTaskRepository for SqliteTtsTaskRepository {
     }
 
     fn find_pending(&self) -> Vec<TtsTask> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
-        let mut stmt = match conn.prepare(
-            "SELECT data_json FROM tts_tasks WHERE status IN ('Queued', 'Running', 'Paused')",
+        let mut stmt = match conn.prepare("SELECT data_json FROM tts_tasks WHERE status IN ('Queued', 'Running', 'Paused')",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_task_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -176,10 +191,53 @@ impl TtsTaskRepository for SqliteTtsTaskRepository {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_task_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_task_repo 行解析", &e);
+                None
+            }
+        }).collect()
+    }
+
+    fn find_all(&self) -> Vec<TtsTask> {
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
+
+        let mut stmt = match conn.prepare(
+            "SELECT data_json FROM tts_tasks ORDER BY created_at DESC",
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_task_repo.find_all", &e);
+                return Vec::new();
+            }
+        };
+
+        let rows = match stmt.query_map([], |row| {
+            let json: String = row.get(0)?;
+            serde_json::from_str::<TtsTask>(&json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+        }) {
+            Ok(r) => r,
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_task_repo.find_all", &e);
+                return Vec::new();
+            }
+        };
+
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("tts_task_repo.find_all 行解析", &e);
+                None
+            }
+        }).collect()
     }
 }
 

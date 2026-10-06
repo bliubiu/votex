@@ -1,0 +1,20 @@
+id: whisper-base
+name: Whisper Base
+kind: Asr
+engine: Whisper
+files:
+  - name: base-encoder.onnx
+    sha256: 5a6b87cb313993f6c9fefec9e7027556f6cb30becddf49655bee36c50ecc12d7
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/main/base-encoder.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-whisper-base/resolve/main/base-encoder.onnx
+  - name: base-decoder.onnx
+    sha256: 8a12c3f6ad65bb5b86d7e6eccc302378f20f9fb2df6cb10747c62895da7ac194
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/main/base-decoder.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-whisper-base/resolve/main/base-decoder.onnx
+  - name: base-tokens.txt
+    sha256: b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/main/base-tokens.txt
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-whisper-base/resolve/main/base-tokens.txt

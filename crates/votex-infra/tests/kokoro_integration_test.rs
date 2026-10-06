@@ -24,6 +24,7 @@ fn voice_path() -> PathBuf {
     p
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test kokoro_integration_test --features slow-models")]
 #[test]
 fn kokoro_tts_synthesize_real_audio() {
     let model_path = model_path();
@@ -40,7 +41,7 @@ fn kokoro_tts_synthesize_real_audio() {
     }
 
     // 1. ?????? Provider
-    let mut provider = votex_infra::tts::kokoro::KokoroProvider::new();
+    let provider = votex_infra::tts::kokoro::KokoroProvider::new();
     assert!(!provider.is_loaded());
 
     // 2. ?????? ONNX ??????????????????????????????

@@ -17,9 +17,9 @@ use votex_domain::shared::value_object::AudioData;
 #[cfg(feature = "ffmpeg")]
 use votex_infra::audio::mp3::{self as mp3_encoder};
 use votex_infra::audio::wav::WavWriter;
-use votex_infra::shared::InferenceGate;
+use votex_infra::shared::{GateCancel, InferenceGate};
 use votex_infra::tts::kokoro::KokoroProvider;
-use votex_infra::tts::indextts2::IndexTTS2Provider;
+use votex_infra::tts::indextts25::IndexTts25Provider;
 use votex_infra::tts::qwen3_tts::Qwen3TtsProvider;
 use votex_infra::tts::cosyvoice::CosyVoiceProvider;
 
@@ -45,7 +45,8 @@ fn resolve_kokoro_model(voice_id: &str, lang: Option<&str>) -> ModelId {
 pub fn engine_memory_estimate_mb(engine: EngineKind, model_override: Option<&str>) -> u64 {
     match engine {
         EngineKind::Kokoro => 512,
-        EngineKind::IndexTTS2 => 2048,
+        // 8 session fp32（gpt_prefill 4.5G + gpt_step 4G + …），留足 KV 峰值
+        EngineKind::IndexTTS25 => 12288,
         EngineKind::Qwen3Tts => {
             if model_override.map(|m| m.contains("1.7b")).unwrap_or(false) {
                 4096
@@ -285,7 +286,7 @@ pub(crate) fn write_chapters_json(audio_path: &Path, chapters: &[ChapterTiming],
 
 pub struct TtsUseCase {
     kokoro: KokoroProvider,
-    indextts2: IndexTTS2Provider,
+    indextts25: IndexTts25Provider,
     qwen3tts: Qwen3TtsProvider,
     cosyvoice: CosyVoiceProvider,
 }
@@ -294,7 +295,7 @@ impl TtsUseCase {
     pub fn new() -> Self {
         Self {
             kokoro: KokoroProvider::new(),
-            indextts2: IndexTTS2Provider::new(),
+            indextts25: IndexTts25Provider::new(),
             qwen3tts: Qwen3TtsProvider::new(),
             cosyvoice: CosyVoiceProvider::new(),
         }
@@ -304,7 +305,7 @@ impl TtsUseCase {
     ///
     /// `model_override` — 可选，强制使用指定模型 ID（如 "qwen3-tts-0.6b"）。
     pub fn synthesize(
-        &mut self,
+        &self,
         text: &str,
         output_path: &Path,
         engine: EngineKind,
@@ -330,7 +331,7 @@ impl TtsUseCase {
     ///   传 None 则不落盘 session（纯流式拼接，内存占用仍为单段级）。
     /// - `opts`：多角色配音 / 响度归一 / 输出变速等附加选项
     pub fn synthesize_ext(
-        &mut self,
+        &self,
         text: &str,
         output_path: &Path,
         engine: EngineKind,
@@ -450,6 +451,10 @@ impl TtsUseCase {
         let estimate_mb = engine_memory_estimate_mb(engine, model_override);
         let gate = InferenceGate::global();
 
+        // 闸门取消令牌复用既有的 cancel 参数（Arc<AtomicBool>），
+        // 使「排队等许可」阶段也能被 GUI 的停止操作中断
+        let gate_cancel = GateCancel::from_atomic(cancel.as_ref().map(|c| Arc::clone(c)));
+
         let total = segments.len();
 
         let result = (|| -> Result<()> {
@@ -478,8 +483,21 @@ impl TtsUseCase {
                 let audio = match cached {
                     Some(a) => a,
                     None => {
-                        // 内存预检 + 并发限流（RAII 许可，段完成即释放）
-                        let _permit = gate.acquire(estimate_mb);
+                        // 取消检查：置位后不再合成后续分段。
+                        // 必须以错误退出而不是 break——break 会走「成功」路径
+                        // finish_all 把半成品音频当正式产物落盘（用户点停止
+                        // 反而得到一份标记成功的截断文件）
+                        if gate_cancel.is_cancelled() {
+                            tracing::info!("分段合成已被取消，已完成 {}/{} 段", i, total);
+                            anyhow::bail!("任务已取消（已完成 {}/{} 段）", i, total);
+                        }
+                        // 内存预检 + 并发限流（RAII 许可，段完成即释放，可取消）
+                        let _permit = match gate.acquire(&gate_cancel, estimate_mb) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                anyhow::bail!("推理闸门拒绝或中断（{}）：{} 段未合成", e, total - i)
+                            }
+                        };
                         // 多角色配音：按段解析音色（未命中回退默认音色）
                         let seg_voice = match plan[i].voice_override.as_deref() {
                             Some(vid) if vid != voice.id => self
@@ -589,20 +607,9 @@ impl TtsUseCase {
     fn get_provider(&self, engine: EngineKind) -> Result<&dyn TtsProvider> {
         match engine {
             EngineKind::Kokoro => Ok(&self.kokoro),
-            EngineKind::IndexTTS2 => Ok(&self.indextts2),
+            EngineKind::IndexTTS25 => Ok(&self.indextts25),
             EngineKind::Qwen3Tts => Ok(&self.qwen3tts),
             EngineKind::CosyVoice3 => Ok(&self.cosyvoice),
-            _ => anyhow::bail!("不支持的 TTS 引擎: {:?}", engine),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn get_provider_mut(&mut self, engine: EngineKind) -> Result<&mut dyn TtsProvider> {
-        match engine {
-            EngineKind::Kokoro => Ok(&mut self.kokoro),
-            EngineKind::IndexTTS2 => Ok(&mut self.indextts2),
-            EngineKind::Qwen3Tts => Ok(&mut self.qwen3tts),
-            EngineKind::CosyVoice3 => Ok(&mut self.cosyvoice),
             _ => anyhow::bail!("不支持的 TTS 引擎: {:?}", engine),
         }
     }
@@ -621,16 +628,23 @@ impl TtsUseCase {
             .ok_or_else(|| anyhow::anyhow!("no voice found for engine {:?}", engine))
     }
 
-    #[allow(dead_code)]
-    fn list_voices(&self, engine: EngineKind) -> Vec<VoiceId> {
-        let provider = self.get_provider(engine).ok();
-        match provider {
-            Some(p) => p.list_voices(),
-            None => Vec::new(),
+    /// 释放指定 TTS 引擎已加载的模型会话（真实释放内存）
+    ///
+    /// 引擎会话位于进程级单例（`shared_tts`），unload 后下次合成会重新加载。
+    /// 此前「释放模型」只改状态位不释放任何会话，GUI 显示已释放但内存不降。
+    pub fn unload(&self, engine: EngineKind) -> Result<()> {
+        match engine {
+            EngineKind::Kokoro => self.kokoro.unload()?,
+            EngineKind::Qwen3Tts => self.qwen3tts.unload()?,
+            EngineKind::CosyVoice3 => self.cosyvoice.unload()?,
+            EngineKind::IndexTTS25 => self.indextts25.unload()?,
+            _ => anyhow::bail!("不支持的 TTS 引擎: {:?}", engine),
         }
+        tracing::info!("TTS 引擎 {:?} 会话已释放", engine);
+        Ok(())
     }
 
-    fn ensure_loaded(&mut self, engine: EngineKind, voice_id: &str, lang: Option<&str>, model_override: Option<&str>) -> Result<()> {
+    fn ensure_loaded(&self, engine: EngineKind, voice_id: &str, lang: Option<&str>, model_override: Option<&str>) -> Result<()> {
         match engine {
             EngineKind::Kokoro => {
                 if !self.kokoro.is_loaded() {
@@ -645,10 +659,10 @@ impl TtsUseCase {
                     ))?;
                 }
             }
-            EngineKind::IndexTTS2 => {
-                if !self.indextts2.is_loaded() {
-                    self.indextts2.load(&Model::new(
-                        ModelId::new("indextts2"), "IndexTTS2", ModelKind::Tts, EngineKind::IndexTTS2,
+            EngineKind::IndexTTS25 => {
+                if !self.indextts25.is_loaded() {
+                    self.indextts25.load(&Model::new(
+                        ModelId::new("indextts-2.5-onnx"), "IndexTTS-2.5 (ONNX)", ModelKind::Tts, EngineKind::IndexTTS25,
                     ))?;
                 }
             }
@@ -659,17 +673,20 @@ impl TtsUseCase {
                 } else {
                     "Qwen3-TTS-1.7B-VoiceDesign"
                 };
-                if !self.qwen3tts.is_loaded() {
-                    self.qwen3tts.load(&Model::new(
-                        ModelId::new(model_id_str), model_name, ModelKind::Tts, EngineKind::Qwen3Tts,
-                    ))?;
-                } else if let Some(override_id) = model_override {
-                    // 已加载但用户手动切换了变体 → 先卸载再重载
-                    let current = ModelId::new(override_id);
-                    self.qwen3tts.unload()?;
-                    self.qwen3tts.load(&Model::new(
-                        current, model_name, ModelKind::Tts, EngineKind::Qwen3Tts,
-                    ))?;
+                let want_small = model_id_str.contains("0.6b");
+                match self.qwen3tts.loaded_is_small() {
+                    // 已加载同一变体 → 直接复用（GUI 每次都传 Some(变体名)，
+                    // 无条件重载会让每次合成多等 10~60 秒）
+                    Some(loaded_small) if loaded_small == want_small => {}
+                    _ => {
+                        if self.qwen3tts.is_loaded() {
+                            // 已加载不同变体 → 先卸载再重载
+                            self.qwen3tts.unload()?;
+                        }
+                        self.qwen3tts.load(&Model::new(
+                            ModelId::new(model_id_str), model_name, ModelKind::Tts, EngineKind::Qwen3Tts,
+                        ))?;
+                    }
                 }
             }
             EngineKind::CosyVoice3 => {
@@ -695,7 +712,6 @@ impl TtsUseCase {
 /// ```
 struct SynthesisSession {
     dir: std::path::PathBuf,
-    text_hash: String,
 }
 
 impl SynthesisSession {
@@ -738,7 +754,11 @@ impl SynthesisSession {
         });
         let _ = std::fs::write(&progress_path, progress.to_string());
 
-        Self { dir: dir.to_path_buf(), text_hash }
+        // text_hash 仅用于 progress.json 的会话一致性校验，
+        // 无需保留在内存态
+        Self {
+            dir: dir.to_path_buf(),
+        }
     }
 
     fn seg_path(&self, index: usize) -> std::path::PathBuf {
@@ -778,10 +798,6 @@ impl SynthesisSession {
             .unwrap_or(0)
     }
 
-    #[allow(dead_code)]
-    fn hash(&self) -> &str {
-        &self.text_hash
-    }
 }
 
 /// 流式输出封装

@@ -47,6 +47,7 @@ fn phonemes_to_token_ids(phonemes: &str) -> Vec<i64> {
     ids
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test tts_debug_test --features slow-models")]
 #[test]
 fn tts_deep_diagnostics() {
     let model_path = {
@@ -123,7 +124,7 @@ fn tts_deep_diagnostics() {
 
     // ========== 4. ???????????????????????? ASR ?????? ==========
     eprintln!("\n=== TTS ?????????????????????===");
-    let mut tts = votex_infra::tts::kokoro::KokoroProvider::new();
+    let tts = votex_infra::tts::kokoro::KokoroProvider::new();
     let model = Model::new(
         ModelId::new("kokoro-82m"),
         &model_path.to_string_lossy(),
@@ -185,7 +186,7 @@ fn tts_deep_diagnostics() {
         return;
     }
 
-    let mut asr = votex_infra::asr::whisper::WhisperProvider::new();
+    let asr = votex_infra::asr::whisper::WhisperProvider::new();
     let whisper_model = Model::new(
         ModelId::new("whisper-base"),
         &whisper_path.to_string_lossy(),

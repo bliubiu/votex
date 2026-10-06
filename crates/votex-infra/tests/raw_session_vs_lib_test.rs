@@ -8,6 +8,7 @@ fn model_path() -> std::path::PathBuf {
     d.join("models/kokoro-82m-v1.1-zh/kokoro-v1.1-zh.os18.onnx")
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test raw_session_vs_lib_test --features slow-models")]
 #[test]
 fn test_raw_session_first() {
     // ??????????????? ???????????? raw Session::builder().commit_from_file()
@@ -29,6 +30,7 @@ fn test_raw_session_first() {
     }
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test raw_session_vs_lib_test --features slow-models")]
 #[test]
 fn test_raw_session_after_lib_load() {
     // ??????????????? ???????????????????????????raw Session
@@ -42,7 +44,7 @@ fn test_raw_session_after_lib_load() {
     eprintln!("\n========== ?????????KokoroProvider?????????Raw Session ==========");
 
     // 1. load provider
-    let mut provider = KokoroProvider::new();
+    let provider = KokoroProvider::new();
     let model = Model::new(ModelId::new("kokoro-82m-v1.1-zh"), "Kokoro-82M-v1.1-zh", ModelKind::Tts, EngineKind::Kokoro);
     
     let t1 = Instant::now();

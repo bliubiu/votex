@@ -2,7 +2,11 @@
 /target/
 
 # ===== 模型与运行时资产（35G+，不入库，另行分发） =====
-/models/
+# 只忽略模型权重与 ONNX Runtime 动态库；**清单定义必须入库**，
+# 否则 clone 仓库后没有 models/registry/*.yaml，模型列表为空、无法下载，
+# 且已回填的 SHA256 会随本地文件一起丢失（详见 docs/23 审查报告）。
+/models/*
+!/models/registry/
 
 # ===== 测试与临时产物 =====
 /tmp/*

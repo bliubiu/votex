@@ -94,9 +94,6 @@ impl OnboardingPage {
             if state.onboarding.selected_whisper_base {
                 list.push("whisper-base".to_string());
             }
-            if state.onboarding.selected_indextts2 {
-                list.push("indextts2".to_string());
-            }
             if state.onboarding.selected_whisper_small {
                 list.push("whisper-small".to_string());
             }
@@ -112,9 +109,7 @@ impl OnboardingPage {
         for model_id in models_to_download {
             let tx = state.task_tx.as_ref().unwrap().clone();
             let mirror = "cn".to_string();
-            let models_dir = std::env::current_dir()
-                .unwrap_or_default()
-                .join("models")
+            let models_dir = votex_app::platform::paths::models_dir()
                 .display()
                 .to_string();
 
@@ -128,7 +123,6 @@ impl OnboardingPage {
 
         ui.checkbox(&mut state.onboarding.selected_kokoro, "Kokoro-82M — TTS 语音合成（推荐）");
         ui.checkbox(&mut state.onboarding.selected_whisper_base, "Whisper Base — ASR 语音识别（推荐）");
-        ui.checkbox(&mut state.onboarding.selected_indextts2, "IndexTTS2 — TTS 方言合成（可选）");
         ui.checkbox(&mut state.onboarding.selected_whisper_small, "Whisper Small — ASR 高精度识别（可选）");
 
         ui.add_space(8.0);

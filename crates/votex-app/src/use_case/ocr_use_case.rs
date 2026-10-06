@@ -1,6 +1,6 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use votex_domain::ocr::entity::OcrTask;
 use votex_domain::ocr::provider::{OcrExporter, OcrExporterRegistry, OcrProvider};
@@ -18,10 +18,22 @@ use votex_infra::ocr::paddleocr::{PaddleOcrEngine, PaddleOcrModelVariant};
 
 /// OCR 识别用例
 pub struct OcrUseCase {
-    engine: Option<Box<dyn OcrProvider>>,
+    /// 已加载的 OCR 引擎
+    ///
+    /// 用 `RwLock<Option<Arc<dyn OcrProvider>>>` 而非 `Option<Box<dyn>>`：
+    /// ① `OcrProvider` 的 `load` / `recognize` 现已全部是 `&self`，
+    ///    引擎对象本身可共享，无需独占；
+    /// ② 原先 `recognize_batch` 用 `take()` 借出引擎，
+    ///    批量中任一步失败就会永久丢失引擎（用户须重新 `load_engine()`），
+    ///    且错误信息不提示这一点。改为共享借用后不再丢失。
+    engine: RwLock<Option<Arc<dyn OcrProvider>>>,
     repo: Option<Arc<dyn OcrTaskRepository>>,
-    exporters: OcrExporterRegistry,
-    cancel_token: Option<Arc<CancellationToken>>,
+    /// 导出器注册表
+    ///
+    /// 注册表本身需要 `&mut` 才能新增条目，而 `register_exporter` 允许在
+    /// 构造后追加。放进 `RwLock` 后，注册与查询都能走 `&self`，
+    /// 使整个 `OcrUseCase` 可被多个任务线程共享。
+    exporters: RwLock<OcrExporterRegistry>,
 }
 
 impl OcrUseCase {
@@ -32,10 +44,9 @@ impl OcrUseCase {
         registry.register(Box::new(MarkdownExporter));
 
         Self {
-            engine: None,
+            engine: RwLock::new(None),
             repo: None,
-            exporters: registry,
-            cancel_token: None,
+            exporters: RwLock::new(registry),
         }
     }
 
@@ -48,17 +59,53 @@ impl OcrUseCase {
     /// 加载 OCR 引擎
     ///
     /// `engine_kind` 取值：
-    /// - `"paddleocr"` / `"paddleocr-v6-tiny"` — PaddleOCR v6 Tiny（默认）
+    /// - `"paddleocr"` / `"paddleocr-v6-medium"` — PaddleOCR v6 Medium（默认，精度最佳）
+    /// - `"paddleocr-v6-small"` — PaddleOCR v6 Small
+    /// - `"paddleocr-v6-tiny"` — PaddleOCR v6 Tiny（轻量）
     /// - `"paddleocr-v4"` — PaddleOCR v4 Mobile
     /// - `"paddleocr-v5-mobile"` — PaddleOCR v5 Mobile
     /// - `"paddleocr-v5-server"` — PaddleOCR v5 Server
     /// - `"easyocr"` — EasyOCR（多语言）
     ///
     /// 模型文件统一放在 `models_dir` 下，按子目录 `paddleocr-v6/`、`paddleocr/`、`paddleocr-v5/`、`EasyOCR/` 组织。
-    pub fn load_engine(&mut self, models_dir: &Path, engine_kind: &str) -> Result<()> {
+    /// 释放已加载的 OCR 引擎会话（真实释放内存）
+    ///
+    /// 未加载时静默成功（幂等）；释放后需重新 `load_engine` 才能识别。
+    pub fn unload_engine(&self) -> Result<()> {
+        let engine = self
+            .engine
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(e) = engine {
+            e.unload()?;
+            tracing::info!("OCR 引擎会话已释放");
+        }
+        Ok(())
+    }
+
+    pub fn load_engine(&self, models_dir: &Path, engine_kind: &str) -> Result<()> {
         let engine: Box<dyn OcrProvider> = match engine_kind {
-            "paddleocr" | "paddleocr-v6-tiny" => {
-                let mut e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V6Tiny);
+            "paddleocr" | "paddleocr-v6-medium" => {
+                let e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V6Medium);
+                let dir = models_dir.join("ocr").join("paddleocr-v6");
+                if !dir.exists() {
+                    anyhow::bail!("PaddleOCR v6 模型目录不存在: {:?}，请先执行 `votex model download paddleocr-v6-medium`", dir);
+                }
+                e.load_from_dir(&dir)?;
+                Box::new(e)
+            }
+            "paddleocr-v6-small" => {
+                let e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V6Small);
+                let dir = models_dir.join("ocr").join("paddleocr-v6");
+                if !dir.exists() {
+                    anyhow::bail!("PaddleOCR v6 模型目录不存在: {:?}，请先执行 `votex model download paddleocr-v6-small`", dir);
+                }
+                e.load_from_dir(&dir)?;
+                Box::new(e)
+            }
+            "paddleocr-v6-tiny" => {
+                let e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V6Tiny);
                 let dir = models_dir.join("ocr").join("paddleocr-v6");
                 if !dir.exists() {
                     anyhow::bail!("PaddleOCR v6 模型目录不存在: {:?}，请先执行 `votex model download paddleocr-v6-tiny`", dir);
@@ -67,7 +114,7 @@ impl OcrUseCase {
                 Box::new(e)
             }
             "paddleocr-v4" => {
-                let mut e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V4Mobile);
+                let e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V4Mobile);
                 let dir = models_dir.join("ocr").join("paddleocr");
                 if !dir.exists() {
                     anyhow::bail!("PaddleOCR v4 模型目录不存在: {:?}，请先执行 `votex model download paddleocr`", dir);
@@ -76,7 +123,7 @@ impl OcrUseCase {
                 Box::new(e)
             }
             "paddleocr-v5-mobile" => {
-                let mut e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V5Mobile);
+                let e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V5Mobile);
                 let dir = models_dir.join("ocr").join("paddleocr-v5");
                 if !dir.exists() {
                     anyhow::bail!("PaddleOCR v5 模型目录不存在: {:?}，请先执行 `votex model download paddleocr-v5-mobile`", dir);
@@ -85,7 +132,7 @@ impl OcrUseCase {
                 Box::new(e)
             }
             "paddleocr-v5-server" => {
-                let mut e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V5Server);
+                let e = PaddleOcrEngine::with_variant(PaddleOcrModelVariant::V5Server);
                 let dir = models_dir.join("ocr").join("paddleocr-v5");
                 if !dir.exists() {
                     anyhow::bail!("PaddleOCR v5 模型目录不存在: {:?}，请先执行 `votex model download paddleocr-v5-server`", dir);
@@ -94,7 +141,7 @@ impl OcrUseCase {
                 Box::new(e)
             }
             "easyocr" => {
-                let mut e = EasyOcrProvider::new();
+                let e = EasyOcrProvider::new();
                 let dir = models_dir.join("ocr").join("EasyOCR");
                 if !dir.exists() {
                     anyhow::bail!("EasyOCR 模型目录不存在: {:?}，请先执行 `votex model download easyocr`", dir);
@@ -104,21 +151,28 @@ impl OcrUseCase {
             }
             _ => anyhow::bail!("不支持的 OCR 引擎: {}", engine_kind),
         };
-        self.engine = Some(engine);
+        *self
+            .engine
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::from(engine));
         tracing::info!("OCR 引擎加载完成 (kind={})", engine_kind);
         Ok(())
     }
 
     /// 执行单图 OCR 识别
     pub fn recognize_single(
-        &mut self,
+        &self,
         input_path: &Path,
         output_path: &Path,
         format: &str,
         no_cls: bool,
         on_progress: ProgressCallback,
     ) -> Result<OcrTask> {
-        let engine = self.engine.as_mut().ok_or_else(|| {
+        let guard = self
+            .engine
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        let engine = guard.as_ref().ok_or_else(|| {
             anyhow::anyhow!("OCR 引擎未加载，请先调用 load_engine()")
         })?;
 
@@ -139,7 +193,6 @@ impl OcrUseCase {
         // 创建任务
         let mut task = OcrTask::new_single(input_path.to_path_buf(), params.clone());
         let cancel_token = CancellationToken::new();
-        self.cancel_token = Some(Arc::new(cancel_token.clone()));
 
         task.status = TaskStatus::Running;
         task.progress.phase = votex_domain::ocr::value_object::OcrPhase::Detecting;
@@ -169,7 +222,11 @@ impl OcrUseCase {
         };
 
         // 通过导出器导出
-        if let Some(exporter) = self.exporters.find_by_format(format) {
+        let exporters = self
+            .exporters
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(exporter) = exporters.find_by_format(format) {
             exporter.export(&result, &out_path)
                 .map_err(|e| anyhow::anyhow!("导出失败: {}", e))?;
         } else {
@@ -196,7 +253,7 @@ impl OcrUseCase {
 
     /// 执行批量 OCR 识别
     pub fn recognize_batch(
-        &mut self,
+        &self,
         image_paths: &[PathBuf],
         output_dir: &Path,
         format: &str,
@@ -204,8 +261,13 @@ impl OcrUseCase {
         max_concurrency: usize,
         on_progress: ProgressCallback,
     ) -> Result<OcrTask> {
-        let engine = self.engine.take().ok_or_else(|| {
-            anyhow::anyhow!("OCR 引擎未加载")
+        // 只借用不取走：批量中任一步失败都不会丢失引擎
+        let guard = self
+            .engine
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        let engine = guard.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("OCR 引擎未加载，请先调用 load_engine()")
         })?;
 
         if image_paths.is_empty() {
@@ -234,7 +296,6 @@ impl OcrUseCase {
         // 创建批量任务
         let mut task = OcrTask::new_batch(image_paths.to_vec(), params.clone());
         let cancel_token = CancellationToken::new();
-        self.cancel_token = Some(Arc::new(cancel_token.clone()));
 
         task.status = TaskStatus::Running;
         task.progress.phase = votex_domain::ocr::value_object::OcrPhase::Detecting;
@@ -246,7 +307,7 @@ impl OcrUseCase {
 
         // 创建批量编排器
         let actual_concurrency = max_concurrency.max(1);
-        let orchestrator = BatchOcrOrchestrator::new(engine, actual_concurrency);
+        let orchestrator = BatchOcrOrchestrator::new(engine.clone(), actual_concurrency);
         let start = Instant::now();
 
         // 收集路径引用
@@ -277,7 +338,11 @@ impl OcrUseCase {
                         ext
                     ));
 
-                    if let Some(exporter) = self.exporters.find_by_format(format) {
+                    let exporters = self
+                        .exporters
+                        .read()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if let Some(exporter) = exporters.find_by_format(format) {
                         if let Err(e) = exporter.export(ocr_result, &page_out_path) {
                             tracing::warn!("第 {} 页导出失败: {}", i + 1, e);
                         }
@@ -316,7 +381,11 @@ impl OcrUseCase {
             )),
         };
 
-        if let Some(exporter) = self.exporters.find_by_format(format) {
+        let exporters = self
+            .exporters
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(exporter) = exporters.find_by_format(format) {
             exporter.export(&merged_result, &merged_result.output_path)
                 .map_err(|e| anyhow::anyhow!("合并导出失败: {}", e))?;
         } else {
@@ -353,25 +422,20 @@ impl OcrUseCase {
         Ok(task)
     }
 
-    /// 取消当前任务
-    pub fn cancel(&self) {
-        if let Some(ref token) = self.cancel_token {
-            token.cancel();
-            tracing::info!("OCR 任务已取消");
-        }
-    }
-
-    /// 获取导出器注册表
-    pub fn exporters(&self) -> &OcrExporterRegistry {
-        &self.exporters
+    /// 获取导出器注册表（读守卫）
+    pub fn exporters(&self) -> std::sync::RwLockReadGuard<'_, OcrExporterRegistry> {
+        self.exporters.read().unwrap_or_else(|e| e.into_inner())
     }
 
     /// 注册额外导出器
     pub fn register_exporter(
-        &mut self,
+        &self,
         exporter: Box<dyn votex_domain::ocr::provider::OcrExporter>,
     ) {
-        self.exporters.register(exporter);
+        self.exporters
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .register(exporter);
     }
 
     /// 从数据库恢复未完成的任务
@@ -406,7 +470,7 @@ mod tests {
 
     #[test]
     fn ocr_use_case_注册导出器() {
-        let mut use_case = OcrUseCase::new();
+        let use_case = OcrUseCase::new();
         use_case.register_exporter(Box::new(TxtExporter));
         // 重复注册不影响
         assert_eq!(use_case.exporters().count(), 4);
@@ -423,7 +487,7 @@ mod tests {
 
     #[test]
     fn ocr_use_case_未加载时报错() {
-        let mut use_case = OcrUseCase::new();
+        let use_case = OcrUseCase::new();
         let result = use_case.recognize_single(
             Path::new("nonexistent.png"),
             Path::new("out.txt"),

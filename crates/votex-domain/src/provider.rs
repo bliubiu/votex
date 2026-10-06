@@ -30,6 +30,11 @@ pub enum ProviderCapability {
     Llm,
     Translation,
     VideoMaterial,
+    /// 推理运行时（ONNX Runtime 动态库本身）
+    ///
+    /// 不是业务能力，而是所有 ONNX 能力的**前置依赖**。
+    /// 单列变体而非塞进某一类，避免 GUI 按能力分组时把 ORT 显示成某种业务引擎。
+    Runtime,
 }
 
 impl ProviderCapability {
@@ -41,6 +46,7 @@ impl ProviderCapability {
             ProviderCapability::Llm => "LLM",
             ProviderCapability::Translation => "翻译",
             ProviderCapability::VideoMaterial => "视频素材",
+            ProviderCapability::Runtime => "运行时",
         }
     }
 }
@@ -111,7 +117,7 @@ pub trait ProviderFactory: Send + Sync {
 pub fn engine_kind_to_capability(kind: &EngineKind) -> ProviderCapability {
     match kind {
         EngineKind::Kokoro
-        | EngineKind::IndexTTS2
+        | EngineKind::IndexTTS25
         | EngineKind::CosyVoice3
         | EngineKind::AzureTts
         | EngineKind::AliyunTts
@@ -146,6 +152,8 @@ pub fn engine_kind_to_capability(kind: &EngineKind) -> ProviderCapability {
         EngineKind::Pexels
         | EngineKind::Pixabay
         | EngineKind::Coverr => ProviderCapability::VideoMaterial,
+
+        EngineKind::OnnxRuntime => ProviderCapability::Runtime,
     }
 }
 

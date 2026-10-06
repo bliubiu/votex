@@ -20,7 +20,9 @@ impl OcrPage {
                 ui.label("OCR 引擎:");
                 egui::ComboBox::from_id_salt("ocr_engine")
                     .selected_text(match state.ocr.engine.as_str() {
-                        "paddleocr-v6-tiny" => "PaddleOCR v6 Tiny（默认）",
+                        "paddleocr" | "paddleocr-v6-medium" => "PaddleOCR v6 Medium（推荐）",
+                        "paddleocr-v6-small" => "PaddleOCR v6 Small",
+                        "paddleocr-v6-tiny" => "PaddleOCR v6 Tiny（轻量）",
                         "paddleocr-v4" => "PaddleOCR v4 Mobile",
                         "paddleocr-v5-mobile" => "PaddleOCR v5 Mobile",
                         "paddleocr-v5-server" => "PaddleOCR v5 Server",
@@ -28,7 +30,9 @@ impl OcrPage {
                         _ => &state.ocr.engine,
                     })
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut state.ocr.engine, "paddleocr-v6-tiny".to_string(), "PaddleOCR v6 Tiny（推荐）");
+                        ui.selectable_value(&mut state.ocr.engine, "paddleocr-v6-medium".to_string(), "PaddleOCR v6 Medium（推荐）");
+                        ui.selectable_value(&mut state.ocr.engine, "paddleocr-v6-small".to_string(), "PaddleOCR v6 Small");
+                        ui.selectable_value(&mut state.ocr.engine, "paddleocr-v6-tiny".to_string(), "PaddleOCR v6 Tiny（轻量）");
                         ui.selectable_value(&mut state.ocr.engine, "paddleocr-v4".to_string(), "PaddleOCR v4 Mobile");
                         ui.selectable_value(&mut state.ocr.engine, "paddleocr-v5-mobile".to_string(), "PaddleOCR v5 Mobile");
                         ui.selectable_value(&mut state.ocr.engine, "paddleocr-v5-server".to_string(), "PaddleOCR v5 Server");
@@ -79,13 +83,23 @@ impl OcrPage {
                                 let engine = state.ocr.engine.clone();
                                 let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+                                // 保存取消令牌供「取消」按钮使用。
+                                // 必须存进 state：此前令牌只存在于闭包内，取消按钮拿不到
+                                // 同一个令牌，点了只是改界面文字，后台识别仍会跑完。
+                                state.ocr.cancel_token = Some(cancel.clone());
                                 task_runner::spawn_ocr(tx, input_path, output_path, output_format, no_cls, engine, cancel);
                             }
                         }
                     } else {
                         if PageLayout::danger_button(ui, "取消", true).clicked() {
-                            state.ocr.is_running = false;
-                            state.ocr.progress_text = "已取消".to_string();
+                            // 置位取消令牌，后台任务在下一个检查点中断
+                            if let Some(ref token) = state.ocr.cancel_token {
+                                token.store(true, std::sync::atomic::Ordering::SeqCst);
+                            }
+                            // 不在此处置 is_running = false：后台线程仍在跑，
+                            // 下一个 Progress 事件会把「正在取消...」覆盖回「识别中 3/10」，
+                            // UI 闪回且用户误以为没取消。终态由后台 Success/Error 事件统一复位。
+                            state.ocr.progress_text = "正在取消...".to_string();
                         }
                     }
                 });
@@ -110,13 +124,23 @@ impl OcrPage {
                                 let max_concurrency = state.ocr.max_concurrency;
                                 let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+                                // 保存取消令牌供「取消」按钮使用。
+                                // 必须存进 state：此前令牌只存在于闭包内，取消按钮拿不到
+                                // 同一个令牌，点了只是改界面文字，后台识别仍会跑完。
+                                state.ocr.cancel_token = Some(cancel.clone());
                                 task_runner::spawn_ocr_batch(tx, image_paths, output_dir, output_format, no_cls, engine, max_concurrency, cancel);
                             }
                         }
                     } else {
                         if PageLayout::danger_button(ui, "取消", true).clicked() {
-                            state.ocr.is_running = false;
-                            state.ocr.progress_text = "已取消".to_string();
+                            // 置位取消令牌，后台任务在下一个检查点中断
+                            if let Some(ref token) = state.ocr.cancel_token {
+                                token.store(true, std::sync::atomic::Ordering::SeqCst);
+                            }
+                            // 不在此处置 is_running = false：后台线程仍在跑，
+                            // 下一个 Progress 事件会把「正在取消...」覆盖回「识别中 3/10」，
+                            // UI 闪回且用户误以为没取消。终态由后台 Success/Error 事件统一复位。
+                            state.ocr.progress_text = "正在取消...".to_string();
                         }
                     }
                 });

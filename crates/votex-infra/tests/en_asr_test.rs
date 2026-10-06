@@ -11,6 +11,7 @@ fn workspace_root() -> PathBuf {
     dir
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test en_asr_test --features slow-models")]
 #[test]
 fn english_asr_verification() {
     let whisper_path = {
@@ -36,7 +37,7 @@ fn english_asr_verification() {
         ("en_hello_world_simple.wav", "hello world"),
     ];
 
-    let mut asr = votex_infra::asr::whisper::WhisperProvider::new();
+    let asr = votex_infra::asr::whisper::WhisperProvider::new();
     let model = Model::new(ModelId::new("whisper-base"), &whisper_path.to_string_lossy(), ModelKind::Asr, EngineKind::Whisper);
     asr.load(&model).expect("Whisper load failed");
 

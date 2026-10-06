@@ -6,15 +6,22 @@
 //! - `EngineState`: 泛型引擎生命周期管理
 //! - `ResourceMonitor`: 系统资源监控与内存压力分级
 //! - `InferenceGate`: 推理并发闸门（防 OOM/宕机）
+//! - `WorkspacePaths`: 工作区路径唯一解析入口（禁止 elsewhere 自行 `current_dir()`）
+//! - `sampling`: 统一的 top-k / top-p 采样实现
 
 mod engine_state;
 mod inference_gate;
 mod model_locator;
 mod ort_factory;
 mod resource_monitor;
+pub mod sampling;
+pub mod workspace_paths;
 
 pub use engine_state::EngineState;
-pub use inference_gate::{derive_max_permits, GatePermit, InferenceGate};
+pub use inference_gate::{
+    derive_max_permits, GateCancel, GateError, GatePermit, InferenceGate,
+};
 pub use model_locator::ModelFileLocator;
 pub use ort_factory::{ensure_ort_dylib_path, ExecutionProvider, OrtSessionFactory};
 pub use resource_monitor::{MemoryPressure, ResourceMonitor, ResourceSnapshot};
+pub use workspace_paths::WorkspacePaths;

@@ -38,14 +38,6 @@ use crate::shared::EngineState;
 // CTranslate2 C API 函数签名
 // ============================================================
 
-/// CTranslate2 translator 句柄（opaque pointer）
-#[allow(dead_code)]
-type TranslatorHandle = *mut std::ffi::c_void;
-
-/// 翻译批次结果句柄
-#[allow(dead_code)]
-type TranslationResult = *mut std::ffi::c_void;
-
 /// 模型加载结果
 #[derive(Debug)]
 struct LoadedLibrary {
@@ -60,7 +52,10 @@ struct LoadedLibrary {
 pub struct CTranslate2Provider {
     state: EngineState<LoadedLibrary>,
     /// 模型目录路径
-    model_dir: Option<String>,
+    /// 已加载的模型目录（诊断信息用）
+    ///
+    /// 走 `EngineState`：`load()` 是 `&self`，裸 `Option` 无法写入。
+    model_dir: EngineState<String>,
     /// 是否启用 int8 量化
     int8_quantized: bool,
 }
@@ -69,7 +64,7 @@ impl CTranslate2Provider {
     pub fn new() -> Self {
         Self {
             state: EngineState::new(),
-            model_dir: None,
+            model_dir: EngineState::new(),
             int8_quantized: true,
         }
     }
@@ -81,7 +76,7 @@ impl CTranslate2Provider {
     }
 
     /// 加载 CTranslate2 动态库
-    pub fn load_library(&mut self) -> Result<(), TranslationError> {
+    pub fn load_library(&self) -> Result<(), TranslationError> {
         let lib_name = if cfg!(target_os = "windows") {
             "ctranslate2.dll"
         } else if cfg!(target_os = "macos") {
@@ -115,14 +110,14 @@ impl CTranslate2Provider {
     }
 
     /// 从 CTranslate2 模型目录加载
-    pub fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    pub fn load_from_dir(&self, model_dir: &Path) -> Result<(), TranslationError> {
         // 检查模型目录是否存在（需要包含 model.bin 等文件）
         let model_bin = model_dir.join("model.bin");
         if !model_bin.exists() {
             return Err(TranslationError::ModelNotLoaded);
         }
 
-        self.model_dir = Some(model_dir.to_string_lossy().to_string());
+        self.model_dir.load(model_dir.to_string_lossy().to_string());
 
         // 尝试加载动态库
         if let Err(e) = self.load_library() {
@@ -180,11 +175,11 @@ impl TranslationProvider for CTranslate2Provider {
         self.translate_ct2(text.trim(), source, target)
     }
 
-    fn load(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    fn load(&self, model_dir: &Path) -> Result<(), TranslationError> {
         self.load_from_dir(model_dir)
     }
 
-    fn unload(&mut self) {
+    fn unload(&self) {
         self.state.unload();
     }
 

@@ -23,7 +23,11 @@ fn load_novel_sample(path: &PathBuf, start: usize, end: usize) -> String {
 #[test]
 fn export_g2p_phonemes() {
     let novel_path = workspace_root().join("tmp/novel.txt");
-    
+    if !novel_path.exists() {
+        eprintln!("⚠ 测试样本 tmp/novel.txt 不存在，跳过（样本文件不入库）");
+        return;
+    }
+
     let samples = vec![
         ("????", load_novel_sample(&novel_path, 3, 4)),
         ("??", load_novel_sample(&novel_path, 37, 38)),

@@ -1,0 +1,22 @@
+id: firered-asr-aed
+name: FireRedASR v2 AED
+kind: Asr
+engine: FireRedAsr
+files:
+  - name: encoder.int8.onnx
+    sha256: 54048d66b6e8f3c80ea7ce95efe794587b0fd81d7271651d0decd3803852ae82
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26/resolve/main/encoder.int8.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26/resolve/main/encoder.int8.onnx
+      github: https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26.tar.bz2
+  - name: decoder.int8.onnx
+    sha256: b840ce7196ae4a14d05ae84bbf56082b6b61ccec5610fda907dddbcea37354ff
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26/resolve/main/decoder.int8.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26/resolve/main/decoder.int8.onnx
+      github: https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26.tar.bz2
+  - name: tokens.txt
+    sha256: 1bc613de2112d257e61a349c3e72d1b1a9cf19c33d3ca954197ad2171e5ea07b
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26/resolve/main/tokens.txt
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-fire-red-asr2-zh_en-int8-2026-02-26/resolve/main/tokens.txt

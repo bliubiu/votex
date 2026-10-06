@@ -1,0 +1,48 @@
+id: m2m-100-418m
+name: M2M-100 418M 多语言翻译
+kind: Translation
+engine: M2m100
+# 存储子目录：与代码查找目录保持一致（代码按 m2m-100 查找）
+sub_dir: m2m-100
+# 运行时实际加载的文件（m2m100.rs:198-243）：
+#   encoder_model.int8.onnx 优先，回落 encoder_model.onnx
+#   decoder_model.int8.onnx 优先，回落 decoder_model.onnx
+#   decoder_with_past_model.int8.onnx（可选，启用 KV cache 加速）
+#   sentencepiece.bpe.model + tokenizer.json（BPE 词表映射）
+#
+# 注意：本模型的 int8 文件名用【点号】.int8（与 nllb 的下划线 _int8 相反）。
+# 磁盘上的 *_fp16.onnx 代码从不读取，故不声明。
+files:
+  # INT8 量化版（代码首选，~1.1GB）
+  - name: encoder_model.int8.onnx
+    sha256: b47e2d5f3fe1123a8916a30ac0cf648870faef00d33fbd06afa9a333d8a3c457
+    sources:
+      huggingface: https://huggingface.co/Xenova/m2m100_418M/resolve/main/onnx/encoder_model_int8.onnx
+      hf-mirror: https://hf-mirror.com/Xenova/m2m100_418M/resolve/main/onnx/encoder_model_int8.onnx
+  - name: decoder_model.int8.onnx
+    sha256: e4cc03767eaac41e4316bc2ea47d127fc2313a33a4e0ab5a07604a6af2e00880
+    sources:
+      huggingface: https://huggingface.co/Xenova/m2m100_418M/resolve/main/onnx/decoder_model_int8.onnx
+      hf-mirror: https://hf-mirror.com/Xenova/m2m100_418M/resolve/main/onnx/decoder_model_int8.onnx
+  # KV cache 解码器（可选，用于加速自回归解码）
+  - name: decoder_with_past_model.int8.onnx
+    sha256: a57f7b10b5b8a0f5169ac7bc53af036f42137c6af8d6a1c2ffc7a6d292839600
+    sources:
+      huggingface: https://huggingface.co/Xenova/m2m100_418M/resolve/main/onnx/decoder_with_past_model_int8.onnx
+      hf-mirror: https://hf-mirror.com/Xenova/m2m100_418M/resolve/main/onnx/decoder_with_past_model_int8.onnx
+  # 分词器
+  - name: sentencepiece.bpe.model
+    sha256: d8f7c76ed2a5e0822be39f0a4f95a55eb19c78f4593ce609e2edbc2aea4d380a
+    sources:
+      huggingface: https://huggingface.co/Xenova/m2m100_418M/resolve/main/sentencepiece.bpe.model
+      hf-mirror: https://hf-mirror.com/Xenova/m2m100_418M/resolve/main/sentencepiece.bpe.model
+  - name: tokenizer.json
+    sha256: 03d9e111731c2d71f39a2c2a88499743e4c251385d07f0384b4349a23ba54363
+    sources:
+      huggingface: https://huggingface.co/Xenova/m2m100_418M/resolve/main/tokenizer.json
+      hf-mirror: https://hf-mirror.com/Xenova/m2m100_418M/resolve/main/tokenizer.json
+  - name: config.json
+    sha256: 1dbdf77ddc7809acd4c54ccf0eab46f840b40174afb1b6f6de8787244e832938
+    sources:
+      huggingface: https://huggingface.co/Xenova/m2m100_418M/resolve/main/config.json
+      hf-mirror: https://hf-mirror.com/Xenova/m2m100_418M/resolve/main/config.json

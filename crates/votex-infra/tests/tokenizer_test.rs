@@ -18,6 +18,11 @@ fn read_novel_excerpt() -> String {
 fn test_tokenizer_output_matches_python() {
     let root = project_root();
     let json_path = root.join("models/tts/qwen3-tts/tokenizer/tokenizer.json");
+    let novel_path = root.join("tmp/novel.txt");
+    if !json_path.exists() || !novel_path.exists() {
+        eprintln!("⚠ tokenizer.json 或 tmp/novel.txt 不存在，跳过（依赖本地模型与样本文件）");
+        return;
+    }
     let tok = tokenizers::Tokenizer::from_file(&json_path)
         .expect("加载 tokenizer.json 失败");
     eprintln!("✅ tokenizer 加载成功, vocab_size: {}", tok.get_vocab_size(true));

@@ -111,14 +111,25 @@ impl AsrPage {
                     state.asr.progress_text = "准备中...".to_string();
                     state.asr.result_message = String::new();
                     state.asr.result_text = String::new();
+                    // 保存取消令牌供「取消」按钮使用。
+                    // 必须存进 state：此前令牌只存在于闭包内，
+                    // 取消按钮拿不到同一个令牌，点了只是改界面文字，
+                    // 后台识别仍会跑完。
+                    state.asr.cancel_token = Some(cancel.clone());
 
                     task_runner::spawn_asr(tx, input_path, output_path, model, language, format, cancel);
                 }
 
                 if state.asr.is_running {
                     if PageLayout::danger_button(ui, "⏹ 取消", true).clicked() {
-                        state.asr.is_running = false;
-                        state.asr.progress_text = "已取消".to_string();
+                        // 置位取消令牌，后台任务在下一个检查点中断
+                        if let Some(ref token) = state.asr.cancel_token {
+                            token.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        // 不在此处置 is_running = false：后台线程仍在跑，
+                        // 下一个 Progress 事件会把「正在取消...」覆盖回「识别中 3/10」，
+                        // UI 闪回且用户误以为没取消。终态由后台 Success/Error 事件统一复位。
+                        state.asr.progress_text = "正在取消...".to_string();
                     }
                 }
             });

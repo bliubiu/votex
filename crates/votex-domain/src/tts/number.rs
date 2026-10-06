@@ -11,7 +11,7 @@
 /// - 4 位数字后跟「年」→ 逐位读（一九九八年）
 /// - 含小数点 → 整数部分按数值读 + 「点」+ 逐位读
 /// - 数字后跟 `%` → 「百分之 + 数值读法」
-/// - 其余整数 → 按数值读法（一千九百九十八）
+/// - 其余整数 → 按数值读法（一千九百九十八），组间正确补「零」
 pub fn normalize_numbers(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len() * 2);
@@ -43,6 +43,17 @@ pub fn normalize_numbers(text: &str) -> String {
                 out.push_str("百分之");
                 out.push_str(&read_number_token(&token));
                 i += 1; // 跳过 %
+                continue;
+            }
+
+            // 4 位纯数字 + 「年」→ 逐位读（1998年 → 一九九八年）
+            if token.len() == 4
+                && token.bytes().all(|b| b.is_ascii_digit())
+                && chars.get(i) == Some(&'年')
+            {
+                for b in token.bytes() {
+                    out.push_str(DIGITS[(b - b'0') as usize]);
+                }
                 continue;
             }
 
@@ -128,8 +139,9 @@ fn integer_to_chinese(digits: &[usize]) -> String {
             prev_group_zero = true;
             continue;
         }
-        // 中间全零组补一个「零」
-        if !out.is_empty() && prev_group_zero {
+        // 组间衔接补零：跳过的全零组之后（12_0000_0034），或本组有前导零
+        // （1234_0567 的 0567、12_0600 的 0600）——只补一个「零」
+        if !out.is_empty() && (prev_group_zero || group[0] == 0) {
             out.push('零');
         }
         // 万组只有千位非零时（如 12,0345），读作「十二万」而非「一万二万」——
@@ -137,14 +149,6 @@ fn integer_to_chinese(digits: &[usize]) -> String {
         out.push_str(&read_under_10k(group));
         out.push_str(units[unit_idx.min(units.len() - 1)]);
         prev_group_zero = false;
-        // 组内尾零需要补零衔接下一组（如 1234,0567 → 一千二百三十四万零五百六十七）
-        let trailing_zeros = group.last() == Some(&0);
-        let _ = trailing_zeros;
-    }
-
-    // 末组为部分零时的「零」衔接：粗粒度处理（组间零已覆盖主要场景）
-    if out.is_empty() {
-        out.push('零');
     }
     out
 }
@@ -219,6 +223,29 @@ mod tests {
     fn 数字_万级() {
         assert_eq!(normalize_numbers("10万人口"), "十万人口");
         assert_eq!(normalize_numbers("12345678"), "一千二百三十四万五千六百七十八");
+    }
+
+    #[test]
+    fn 数字_年份逐位读() {
+        assert_eq!(normalize_numbers("1998年"), "一九九八年");
+        assert_eq!(normalize_numbers("2026年春天"), "二零二六年春天");
+        // 非 4 位数字 + 年 仍按数值读
+        assert_eq!(normalize_numbers("365年"), "三百六十五年");
+    }
+
+    #[test]
+    fn 数字_组间补零() {
+        // 低组有前导零
+        assert_eq!(normalize_numbers("12000034"), "一千二百万零三十四");
+        assert_eq!(normalize_numbers("12340567"), "一千二百三十四万零五百六十七");
+        assert_eq!(normalize_numbers("100600"), "十万零六百");
+        assert_eq!(normalize_numbers("10200304"), "一千零二十万零三百零四");
+        // 全零组被跳过后衔接
+        assert_eq!(normalize_numbers("1200000034"), "十二亿零三十四");
+        // 低组无前导零不补零
+        assert_eq!(normalize_numbers("12005678"), "一千二百万五千六百七十八");
+        // 全零尾组不补尾零
+        assert_eq!(normalize_numbers("12000000"), "一千二百万");
     }
 
     #[test]

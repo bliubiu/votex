@@ -53,7 +53,7 @@ impl AliyunTtsProvider {
             .map_err(|e| TtsError::SynthesisFailed(format!("创建 HTTP 客户端失败: {}", e)))?;
 
         Ok(Self {
-            engine: EngineKind::Kokoro,
+            engine: EngineKind::AliyunTts,
             client,
             access_key,
             secret_key,
@@ -145,11 +145,11 @@ impl TtsProvider for AliyunTtsProvider {
         self.engine
     }
 
-    fn load(&mut self, _model: &Model) -> Result<(), TtsError> {
+    fn load(&self, _model: &Model) -> Result<(), TtsError> {
         Ok(())
     }
 
-    fn unload(&mut self) -> Result<(), TtsError> {
+    fn unload(&self) -> Result<(), TtsError> {
         Ok(())
     }
 

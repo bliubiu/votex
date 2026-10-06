@@ -140,6 +140,7 @@ fn lcs_similarity(orig: &[char], recog: &[char]) -> f64 {
     dp[limit_m][limit_n] as f64 / orig.len() as f64 * 100.0
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test tts_asr_闭环_test --features slow-models")]
 #[test]
 fn kokoro_zh_to_whisper_close_loop() {
     switch_to_workspace_root();
@@ -152,7 +153,7 @@ fn kokoro_zh_to_whisper_close_loop() {
 
     // ─── 1. Kokoro 合成中文语音 ───────────────────────
     eprintln!("--- Step 1: Kokoro-82M-v1.1-zh 语音合成 ---");
-    let mut tts = votex_infra::tts::kokoro::KokoroProvider::new();
+    let tts = votex_infra::tts::kokoro::KokoroProvider::new();
     let tts_model = Model::new(
         ModelId::new(KOKORO_ZH_MODEL_ID),
         &kokoro_dir.to_string_lossy(),
@@ -194,7 +195,7 @@ fn kokoro_zh_to_whisper_close_loop() {
 
     // ─── 2. Whisper 转写 ─────────────────────────────
     eprintln!("--- Step 2: Whisper 语音转写 ---");
-    let mut asr = votex_infra::asr::whisper::WhisperProvider::new();
+    let asr = votex_infra::asr::whisper::WhisperProvider::new();
     let asr_model = Model::new(
         ModelId::new(WHISPER_MODEL_ID),
         &whisper_dir.to_string_lossy(),
@@ -254,6 +255,7 @@ fn kokoro_zh_to_whisper_close_loop() {
 }
 
 /// 纯逻辑断言：闭环相似度算法自身必须正确，避免上面的指标"永远通过"
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test tts_asr_闭环_test --features slow-models")]
 #[test]
 fn 闭环相似度算法自身正确() {
     assert_eq!(lcs_similarity(&"完全一致".chars().collect::<Vec<_>>(), &"完全一致".chars().collect::<Vec<_>>()), 100.0);
@@ -275,6 +277,7 @@ fn 闭环相似度算法自身正确() {
 }
 
 /// 路径契约：闭环测试依赖的模型目录必须落在规范位置
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test tts_asr_闭环_test --features slow-models")]
 #[test]
 fn 闭环模型路径符合规范() {
     switch_to_workspace_root();

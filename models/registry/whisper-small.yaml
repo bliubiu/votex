@@ -1,0 +1,20 @@
+id: whisper-small
+name: Whisper Small
+kind: Asr
+engine: Whisper
+files:
+  - name: small-encoder.onnx
+    sha256: 119bd1e8ba0524baee1687f6b22bf0abd2fe539549cd000734edbca81c66751e
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-encoder.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-encoder.onnx
+  - name: small-decoder.onnx
+    sha256: a4165cca5c77e381938c0e111032a384901b1e434ae2ad948859035392d21d2c
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-decoder.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-decoder.onnx
+  - name: small-tokens.txt
+    sha256: b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-tokens.txt
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-whisper-small/resolve/main/small-tokens.txt

@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::Semaphore;
 use votex_domain::error::OcrError;
 use votex_domain::ocr::provider::OcrProvider;
@@ -8,17 +8,22 @@ use votex_domain::shared::value_object::{CancellationToken, ProgressCallback, Pr
 
 /// 批量 OCR 编排器
 /// 使用信号量控制并发推理数量，防止显存/内存溢出
+///
+/// 引擎以 `Arc<dyn>` 直接共享而非 `Arc<Mutex<Box<dyn>>>`：
+/// `OcrProvider::recognize` 是 `&self`，引擎内部各 ONNX session 由
+/// `EngineState` 自行加锁，外层再包一把 Mutex 既无必要、
+/// 又会把并发度强制压到 1。
 pub struct BatchOcrOrchestrator {
-    engine: Arc<Mutex<Box<dyn OcrProvider>>>,
+    engine: Arc<dyn OcrProvider>,
     semaphore: Arc<Semaphore>,
 }
 
 impl BatchOcrOrchestrator {
     /// 创建编排器
     /// `max_concurrency`: 最大并发推理数
-    pub fn new(engine: Box<dyn OcrProvider>, max_concurrency: usize) -> Self {
+    pub fn new(engine: Arc<dyn OcrProvider>, max_concurrency: usize) -> Self {
         Self {
-            engine: Arc::new(Mutex::new(engine)),
+            engine,
             semaphore: Arc::new(Semaphore::new(max_concurrency)),
         }
     }
@@ -60,20 +65,19 @@ impl BatchOcrOrchestrator {
                 break;
             }
 
-            // 尝试获取信号量许可，失败则串行
+            // 信号量许可仅用于**记账**（统计并发上限是否触达）。
+            // 注意：本循环是串行的，真正的并行由调用方分派到多线程实现；
+            // 若后续要改为并行，此处的 permit 必须移入线程内并持有到推理结束，
+            // 否则信号量会立刻被释放，起不到限流作用。
             let engine_result = match self.semaphore.try_acquire() {
                 Ok(permit) => {
-                    let r = {
-                        let mut engine = self.engine.lock().unwrap();
-                        engine.recognize_with_cancel(path, params, cancel_token, None)
-                    };
+                    let r = self.engine.recognize_with_cancel(path, params, cancel_token, None);
                     drop(permit);
                     r
                 }
                 Err(_) => {
                     tracing::debug!("批量 OCR: 达到并发上限，串行处理 (页 {}/{})", i + 1, total);
-                    let mut engine = self.engine.lock().unwrap();
-                    engine.recognize_with_cancel(path, params, cancel_token, None)
+                    self.engine.recognize_with_cancel(path, params, cancel_token, None)
                 }
             };
             results.push((path, engine_result));
@@ -98,7 +102,7 @@ impl BatchOcrOrchestrator {
     }
 
     /// 获取当前引擎
-    pub fn engine(&self) -> &Arc<Mutex<Box<dyn OcrProvider>>> {
+    pub fn engine(&self) -> &Arc<dyn OcrProvider> {
         &self.engine
     }
 
@@ -116,15 +120,15 @@ mod tests {
     fn batch_orchestrator_创建() {
         use crate::ocr::paddleocr::PaddleOcrEngine;
         let engine = PaddleOcrEngine::new();
-        let orchestrator = BatchOcrOrchestrator::new(Box::new(engine), 2);
-        assert!(!orchestrator.engine().lock().unwrap().is_loaded());
+        let orchestrator = BatchOcrOrchestrator::new(Arc::new(engine), 2);
+        assert!(!orchestrator.engine().is_loaded());
     }
 
     #[test]
     fn batch_orchestrator_空列表() {
         use crate::ocr::paddleocr::PaddleOcrEngine;
         let engine = PaddleOcrEngine::new();
-        let orchestrator = BatchOcrOrchestrator::new(Box::new(engine), 2);
+        let orchestrator = BatchOcrOrchestrator::new(Arc::new(engine), 2);
         let params = OcrParams::default();
         let cancel = CancellationToken::new();
         let results = orchestrator.process_batch(&[], &params, &cancel, None);

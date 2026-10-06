@@ -5,7 +5,7 @@ use sherpa_onnx::{
     OfflineRecognizer, OfflineRecognizerConfig, OfflineWhisperModelConfig,
 };
 use votex_domain::asr::provider::AsrProvider;
-use votex_domain::asr::value_object::{AsrParams, Language, RecognizeOutput, WordTimestamp};
+use votex_domain::asr::value_object::{AsrParams, RecognizeOutput, WordTimestamp};
 use votex_domain::error::AsrError;
 use votex_domain::model::entity::Model;
 use votex_domain::model::value_object::EngineKind;
@@ -36,7 +36,7 @@ impl WhisperProvider {
     }
 
     /// 从模型目录加载 ONNX 模型
-    fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), AsrError> {
+    fn load_from_dir(&self, model_dir: &Path) -> Result<(), AsrError> {
         // F53：候选名必须覆盖三类导出命名，否则已有资产无法加载——
         //  1. 规范命名：`encoder.onnx` / `decoder.onnx` / `tokens.txt`
         //  2. sherpa-onnx 官方命名：`<size>-encoder.onnx` / `<size>-decoder.onnx` / `<size>-tokens.txt`
@@ -66,7 +66,7 @@ impl WhisperProvider {
         let recognizer = OfflineRecognizer::create(&config)
             .ok_or_else(|| AsrError::LoadFailed("创建 Whisper 识别器失败".to_string()))?;
 
-        *self.recognizer.lock().unwrap() = Some(recognizer);
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = Some(recognizer);
 
         tracing::info!("Whisper ONNX 引擎加载完成 (目录: {:?})", model_dir);
         Ok(())
@@ -208,15 +208,6 @@ impl WhisperProvider {
         hits.into_iter().next()
     }
 
-    /// 语言枚举转 whisper 语言代码
-    #[allow(dead_code)]
-    fn language_code(lang: &Language) -> String {
-        match lang {
-            Language::Zh => "zh".to_string(),
-            Language::ZhEn => "zh".to_string(),
-            Language::En => "en".to_string(),
-        }
-    }
 }
 
 impl AsrProvider for WhisperProvider {
@@ -224,13 +215,13 @@ impl AsrProvider for WhisperProvider {
         EngineKind::Whisper
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), AsrError> {
+    fn load(&self, model: &Model) -> Result<(), AsrError> {
         let model_dir = Self::find_model_dir(model)?;
         self.load_from_dir(&model_dir)
     }
 
-    fn unload(&mut self) -> Result<(), AsrError> {
-        *self.recognizer.lock().unwrap() = None;
+    fn unload(&self) -> Result<(), AsrError> {
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = None;
         tracing::info!("Whisper 引擎已释放");
         Ok(())
     }
@@ -240,7 +231,7 @@ impl AsrProvider for WhisperProvider {
         audio: &AudioData,
         _params: &AsrParams,
     ) -> Result<RecognizeOutput, AsrError> {
-        let guard = self.recognizer.lock().unwrap();
+        let guard = self.recognizer.lock().unwrap_or_else(|e| e.into_inner());
         let recognizer = guard.as_ref().ok_or(AsrError::EngineNotLoaded)?;
 
         // 转换为 16kHz 单声道 f32 PCM
@@ -282,7 +273,7 @@ impl AsrProvider for WhisperProvider {
     }
 
     fn is_loaded(&self) -> bool {
-        self.recognizer.lock().unwrap().is_some()
+        self.recognizer.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 }
 

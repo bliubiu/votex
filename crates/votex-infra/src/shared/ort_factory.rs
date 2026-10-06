@@ -18,30 +18,81 @@ use votex_domain::config::value_object::InferenceConfig;
 /// 全局默认执行提供器
 static GLOBAL_EP: OnceLock<ExecutionProvider> = OnceLock::new();
 
+/// ONNX Runtime 动态库在各平台的文件名
+///
+/// ort 启用 `load-dynamic` 后，未设置 `ORT_DYLIB_PATH` 时会按此默认名
+/// 在系统库搜索路径中查找，因此自携带的库必须使用对应平台的文件名。
+#[cfg(target_os = "windows")]
+const ORT_DYLIB_NAME: &str = "onnxruntime.dll";
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+const ORT_DYLIB_NAME: &str = "libonnxruntime.so";
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+const ORT_DYLIB_NAME: &str = "libonnxruntime.dylib";
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "macos",
+    target_os = "ios"
+)))]
+const ORT_DYLIB_NAME: &str = "onnxruntime.dll";
+
 /// 确保 ORT 动态库路径已设置（load-dynamic 模式）
 ///
 /// ort-sys rc.13 的静态预编译库存在初始化失败问题（GetApi 返回空），
 /// 因此 workspace 启用 `load-dynamic`，运行时加载项目自带的
-/// `models/runtime/onnxruntime.dll`（ORT 1.30，CPU fp16 内核比 1.22 快 ~2-3 倍）。
-/// 在首次创建 Session 前调用；用户已显式设置 `ORT_DYLIB_PATH` 时不覆盖；
-/// 找不到本地 DLL 时不设置（回落到系统 DLL 搜索路径的 `onnxruntime.dll`）。
+/// `models/runtime/<平台库名>`（ORT 1.30，CPU fp16 内核比 1.22 快 ~2-3 倍）。
+///
+/// 必须在**任何** ort API 调用前执行（不只是建 Session）：
+/// 一旦 ort 先按默认名 `onnxruntime.dll` 加载失败，其内部的全局库句柄
+/// 会被写入失败状态并缓存，之后再设置 `ORT_DYLIB_PATH` 也无法补救。
+///
+/// 行为：
+/// - 用户已显式设置 `ORT_DYLIB_PATH` 时不覆盖；
+/// - 依次从可执行文件所在目录、当前工作目录向上回溯最多 6 层查找；
+/// - 找不到时不设置（回落到系统库搜索路径）。
 pub fn ensure_ort_dylib_path() {
-    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
-        return;
-    }
-    // 从当前目录向上定位工作区（cargo test 的 cwd 是 crates/<name>，需向上回溯）
-    let mut dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    for _ in 0..6 {
-        let candidate = dir.join("models/runtime/onnxruntime.dll");
-        if candidate.exists() {
-            tracing::info!("ORT 动态库: {:?}", candidate);
-            std::env::set_var("ORT_DYLIB_PATH", &candidate);
+    // 已显式设置时仅在路径确实存在时才沿用。
+    // .cargo/config.toml 为让 cargo test 找到库而设置了该变量（文件名按 Windows 写死），
+    // 若在 Linux/macOS 上直接沿用会指向不存在的 .dll，故此处校验后按平台名重新查找。
+    if let Some(path) = std::env::var_os("ORT_DYLIB_PATH") {
+        let p = std::path::PathBuf::from(&path);
+        if p.is_file() {
             return;
         }
-        if !dir.pop() {
-            break;
+        tracing::debug!("ORT_DYLIB_PATH 指向的文件不存在，重新查找: {:?}", p);
+    }
+
+    // 可执行文件所在目录优先：GUI 双击启动时 cwd 可能是任意位置
+    let mut roots: Vec<std::path::PathBuf> = Vec::with_capacity(2);
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.to_path_buf());
         }
     }
+    // 当前目录（cargo test 的 cwd 是 crates/<name>，需向上回溯）
+    roots.push(std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+
+    for root in roots {
+        let mut dir = root;
+        for _ in 0..6 {
+            let candidate = dir.join("models").join("runtime").join(ORT_DYLIB_NAME);
+            if candidate.exists() {
+                tracing::info!("ORT 动态库: {:?}", candidate);
+                std::env::set_var("ORT_DYLIB_PATH", &candidate);
+                return;
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+    }
+
+    tracing::warn!(
+        "未找到自带 ONNX Runtime 动态库 {}，回落到系统库搜索路径",
+        ORT_DYLIB_NAME
+    );
 }
 
 /// 全局推理配置（启动时注入，支持 GUI 运行时更新）
@@ -273,19 +324,6 @@ impl OrtSessionFactory {
         build_configured_session_with_level(model_path, n_threads, inter_threads, opt_level, config)
     }
 
-    /// 尝试创建 DirectML GPU 会话（默认 Level3）
-    #[cfg(feature = "directml")]
-    #[allow(dead_code)]
-    fn try_create_directml(
-        model_path: &Path,
-        n_threads: usize,
-        config: &InferenceConfig,
-    ) -> ort::Result<Session> {
-        Self::try_create_directml_with_level(
-            model_path, n_threads, GraphOptimizationLevel::All, config,
-        )
-    }
-
     /// 尝试创建 DirectML GPU 会话（自定义优化级别）
     #[cfg(feature = "directml")]
     fn try_create_directml_with_level(
@@ -326,19 +364,6 @@ fn resolve_thread_count(config_val: u32) -> usize {
     } else {
         config_val as usize
     }
-}
-
-/// 应用推理配置构建 Session（CPU 路径，默认 Level3）
-#[allow(dead_code)]
-fn build_configured_session(
-    model_path: &Path,
-    intra_threads: usize,
-    inter_threads: usize,
-    config: &InferenceConfig,
-) -> ort::Result<Session> {
-    build_configured_session_with_level(
-        model_path, intra_threads, inter_threads, GraphOptimizationLevel::All, config,
-    )
 }
 
 /// 应用推理配置构建 Session（CPU 路径，自定义优化级别）

@@ -5,10 +5,8 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
-use votex_domain::model::value_object::EngineKind;
+use std::sync::atomic::{AtomicBool, Ordering};
 use votex_domain::tts::value_object::AudioFormat;
-use crate::use_case::tts_use_case::TtsUseCase;
-use crate::use_case::asr_use_case::AsrUseCase;
 
 /// 视频生成请求
 #[derive(Debug, Clone)]
@@ -49,14 +47,72 @@ pub struct VideoGenerateUseCase;
 
 impl VideoGenerateUseCase {
     /// 执行视频生成
-    pub fn execute(&self, req: VideoGenerateRequest, output_path: &str) -> Result<VideoGenerateResponse> {
-        let audio_path = Path::new("_temp_audio.wav");
+    ///
+    /// `cancel` 置 true 后在各阶段边界中断（返回错误，临时文件照常清理）。
+    pub fn execute(
+        &self,
+        req: VideoGenerateRequest,
+        output_path: &str,
+        cancel: Option<std::sync::Arc<AtomicBool>>,
+    ) -> Result<VideoGenerateResponse> {
+        // 临时文件放系统临时目录并带进程 ID + 时间戳：
+        // 此前写死在进程 cwd（GUI 双击启动时 cwd 任意）且无唯一性，
+        // 并发两次合成互相覆盖
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let audio_path = std::env::temp_dir().join(format!(
+            "votex_video_audio_{}_{}.wav",
+            std::process::id(),
+            unique
+        ));
+        let subtitle_path = std::env::temp_dir().join(format!(
+            "votex_video_subtitle_{}_{}.{}",
+            std::process::id(),
+            unique,
+            if req.subtitle_format.is_empty() { "srt" } else { &req.subtitle_format }
+        ));
+
+        let result = self.run(&req, &audio_path, &subtitle_path, output_path, cancel);
+
+        // 无论成败都清理临时文件（此前失败路径会残留）
+        let _ = std::fs::remove_file(&audio_path);
+        let _ = std::fs::remove_file(&subtitle_path);
+
+        result
+    }
+
+    fn run(
+        &self,
+        req: &VideoGenerateRequest,
+        audio_path: &Path,
+        subtitle_path: &Path,
+        output_path: &str,
+        cancel: Option<std::sync::Arc<AtomicBool>>,
+    ) -> Result<VideoGenerateResponse> {
+        let cancel_flag = cancel.clone();
+        let cancelled = move |stage: &str| -> Result<()> {
+            if let Some(c) = cancel_flag.as_deref() {
+                if c.load(Ordering::SeqCst) {
+                    anyhow::bail!("任务已取消（{} 阶段）", stage);
+                }
+            }
+            Ok(())
+        };
 
         // 1. TTS 合成配音
+        cancelled("TTS 合成")?;
+        let engine = votex_domain::tts::value_object::parse_tts_engine(&req.tts_engine)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "不支持的 TTS 引擎: {}，可选: kokoro / indextts25 / qwen3-tts / cosyvoice3",
+                    req.tts_engine
+                )
+            })?;
         {
-            let mut tts = TtsUseCase::new();
-            let engine = parse_engine(&req.tts_engine);
-            tts.synthesize(
+            let tts = crate::services::shared_cases::shared_tts();
+            tts.synthesize_ext(
                 &req.script,
                 audio_path,
                 engine,
@@ -66,43 +122,42 @@ impl VideoGenerateUseCase {
                 None,
                 None,
                 None,
+                cancel.clone(),
+                None,
+                &Default::default(),
             )
             .context("TTS 合成失败")?;
         }
 
         // 2. ASR 字幕（可选）
-        let subtitle_path = if req.subtitle {
-            let srt_path = Path::new("_temp_subtitle.srt");
-            let mut asr = AsrUseCase::new();
+        let subtitle = if req.subtitle {
+            cancelled("ASR 字幕")?;
+            let asr = crate::services::shared_cases::shared_asr();
             asr.recognize(
                 audio_path,
-                srt_path,
+                subtitle_path,
                 &req.asr_engine,
                 "zh",
                 &req.subtitle_format,
+                cancel.as_deref(),
             )
             .context("ASR 识别失败")?;
-            Some(srt_path.to_path_buf())
+            Some(subtitle_path.clone())
         } else {
             None
         };
 
         // 3. 合成视频
+        cancelled("视频合成")?;
         let output = Path::new(output_path);
         self.compose_video(
             audio_path,
-            subtitle_path.as_deref(),
+            subtitle.as_deref(),
             req.bg_images.as_ref(),
             req.bg_music.as_ref(),
             output,
             &req.resolution,
         )?;
-
-        // 4. 清理临时文件
-        let _ = std::fs::remove_file(audio_path);
-        if let Some(ref sub) = subtitle_path {
-            let _ = std::fs::remove_file(sub);
-        }
 
         // 估算时长（按语速 4字/秒）
         let duration_secs = req.script.chars().count() as f64 / 4.0 / req.speed as f64;
@@ -129,13 +184,22 @@ impl VideoGenerateUseCase {
         // 背景
         if let Some(images) = bg_images {
             if !images.is_empty() {
-                let list_path = Path::new("_votex_images.txt");
+                let unique = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                let list_path = std::env::temp_dir().join(format!(
+                    "votex_video_images_{}_{}.txt",
+                    std::process::id(),
+                    unique
+                ));
                 let mut list_content = String::new();
                 for img in images {
                     list_content.push_str(&format!("file '{}'\nduration 5.0\n", img));
                 }
-                std::fs::write(list_path, &list_content).context("写入图片列表失败")?;
-                cmd.args(["-f", "concat", "-safe", "0", "-i", list_path.to_str().unwrap()]);
+                std::fs::write(&list_path, &list_content).context("写入图片列表失败")?;
+                cmd.args(["-f", "concat", "-safe", "0", "-i"]);
+                cmd.arg(&list_path);
             } else {
                 cmd.args(["-f", "lavfi", "-i", "color=c=#2C3E50:s=1920x1080:d=30"]);
             }
@@ -167,16 +231,5 @@ impl VideoGenerateUseCase {
         }
 
         Ok(())
-    }
-}
-
-/// 解析引擎名称
-fn parse_engine(s: &str) -> EngineKind {
-    match s.to_lowercase().as_str() {
-        "kokoro" => EngineKind::Kokoro,
-        "indextts2" | "indextts" => EngineKind::IndexTTS2,
-        "whisper" => EngineKind::Whisper,
-        "sensevoice" => EngineKind::SenseVoice,
-        _ => EngineKind::Kokoro,
     }
 }

@@ -72,7 +72,7 @@ struct FileLogWriter<'a> {
 
 impl Write for FileLogWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let today = today_str();
 
         // 日期变更或文件未打开时轮转
@@ -115,7 +115,7 @@ impl Write for FileLogWriter<'_> {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref mut f) = state.current_file {
             f.flush()
         } else {

@@ -4,6 +4,9 @@
 //! zh→en 使用 golden 数据中已验证过的测试用例。
 //! en→zh 使用独立验证数据。
 
+// 测试名使用 camelCase 描述语言对与场景，此处豁免命名检查
+#![allow(non_snake_case)]
+
 use std::path::Path;
 
 use votex_domain::translation::provider::TranslationProvider;
@@ -29,7 +32,7 @@ fn en_zh_model_dir() -> std::path::PathBuf {
 }
 
 fn load_bidirectional() -> OpusMtProvider {
-    let mut engine = OpusMtProvider::new();
+    let engine = OpusMtProvider::new();
     engine
         .load_zh_en_from_dir(&zh_en_model_dir())
         .unwrap_or_else(|e| panic!("加载 zh→en 模型失败: {}", e));
@@ -39,6 +42,7 @@ fn load_bidirectional() -> OpusMtProvider {
     engine
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test opus_mt_translation_test --features slow-models")]
 #[test]
 fn test_opus_mt_你好世界() {
     let model_dir = zh_en_model_dir();
@@ -48,7 +52,7 @@ fn test_opus_mt_你好世界() {
     println!("\n=== Opus-MT zh→en: '你好世界' ===");
     println!("模型目录: {:?}", model_dir);
 
-    let mut engine = OpusMtProvider::new();
+    let engine = OpusMtProvider::new();
     engine
         .load_from_dir(&model_dir)
         .unwrap_or_else(|e| panic!("加载模型失败: {}", e));
@@ -66,6 +70,7 @@ fn test_opus_mt_你好世界() {
     println!("✓ 翻译结果与 golden 数据一致");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test opus_mt_translation_test --features slow-models")]
 #[test]
 fn test_opus_mt_今天天气很好() {
     let model_dir = zh_en_model_dir();
@@ -75,7 +80,7 @@ fn test_opus_mt_今天天气很好() {
     println!("\n=== Opus-MT zh→en: '今天天气很好' ===");
     println!("模型目录: {:?}", model_dir);
 
-    let mut engine = OpusMtProvider::new();
+    let engine = OpusMtProvider::new();
     engine
         .load_from_dir(&model_dir)
         .unwrap_or_else(|e| panic!("加载模型失败: {}", e));
@@ -93,11 +98,12 @@ fn test_opus_mt_今天天气很好() {
     println!("✓ 翻译结果与 golden 数据一致");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test opus_mt_translation_test --features slow-models")]
 #[test]
 fn test_opus_mt_自动检测方向() {
     let model_dir = zh_en_model_dir();
 
-    let mut engine = OpusMtProvider::new();
+    let engine = OpusMtProvider::new();
     engine
         .load_from_dir(&model_dir)
         .unwrap_or_else(|e| panic!("加载模型失败: {}", e));
@@ -111,11 +117,12 @@ fn test_opus_mt_自动检测方向() {
     assert_eq!(result, "- Good world.");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test opus_mt_translation_test --features slow-models")]
 #[test]
 fn test_opus_mt_英译中未加载模型应报错() {
     let model_dir = zh_en_model_dir();
 
-    let mut engine = OpusMtProvider::new();
+    let engine = OpusMtProvider::new();
     engine
         .load_from_dir(&model_dir)
         .unwrap_or_else(|e| panic!("加载模型失败: {}", e));
@@ -125,11 +132,12 @@ fn test_opus_mt_英译中未加载模型应报错() {
     println!("✓ 英译中正确返回错误: {:?}", result.err().unwrap());
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test opus_mt_translation_test --features slow-models")]
 #[test]
 fn test_opus_mt_空文本应报错() {
     let model_dir = zh_en_model_dir();
 
-    let mut engine = OpusMtProvider::new();
+    let engine = OpusMtProvider::new();
     engine
         .load_from_dir(&model_dir)
         .unwrap_or_else(|e| panic!("加载模型失败: {}", e));
@@ -139,6 +147,7 @@ fn test_opus_mt_空文本应报错() {
     println!("✓ 空文本正确返回错误");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test opus_mt_translation_test --features slow-models")]
 #[test]
 fn test_opus_mt_en_zh_HelloWorld() {
     let engine = load_bidirectional();
@@ -158,6 +167,7 @@ fn test_opus_mt_en_zh_HelloWorld() {
     println!("✓ en→zh 翻译结果包含中文");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test opus_mt_translation_test --features slow-models")]
 #[test]
 fn test_opus_mt_en_zh_good_morning() {
     let engine = load_bidirectional();
@@ -175,6 +185,7 @@ fn test_opus_mt_en_zh_good_morning() {
     println!("✓ en→zh 翻译完成");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test opus_mt_translation_test --features slow-models")]
 #[test]
 fn test_opus_mt_bidirectional_roundtrip() {
     let engine = load_bidirectional();

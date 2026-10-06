@@ -27,7 +27,7 @@ pub struct VideoCommand {
     #[arg(short, long, default_value = "output.mp4")]
     pub output: String,
 
-    /// TTS 引擎 (kokoro / indextts2 / qwen3 / cosyvoice3)
+    /// TTS 引擎 (kokoro / indextts2 / indextts25 / qwen3 / cosyvoice3)
     #[arg(long, default_value = "kokoro")]
     pub tts_engine: String,
 
@@ -78,7 +78,7 @@ pub fn handle(cmd: &VideoCommand) -> Result<()> {
     // 1. TTS 合成配音
     let audio_path = Path::new("_temp_audio.wav");
     {
-        let mut tts = votex_app::use_case::tts_use_case::TtsUseCase::new();
+        let tts = votex_app::use_case::tts_use_case::TtsUseCase::new();
         tts.synthesize(
             &cmd.script,
             audio_path,
@@ -96,13 +96,14 @@ pub fn handle(cmd: &VideoCommand) -> Result<()> {
     // 2. ASR 字幕（可选）
     let subtitle_path = if cmd.subtitle {
         let srt_path = Path::new("_temp_subtitle.srt");
-        let mut asr = votex_app::use_case::asr_use_case::AsrUseCase::new();
+        let asr = votex_app::use_case::asr_use_case::AsrUseCase::new();
         asr.recognize(
             audio_path,
             srt_path,
             &cmd.asr_engine,
             "zh",
             &cmd.subtitle_format,
+            None,
         ).context("ASR 识别失败")?;
         println!("   ✅ 字幕生成完成");
         Some(srt_path.to_path_buf())

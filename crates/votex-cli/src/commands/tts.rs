@@ -57,7 +57,7 @@ pub fn handle(
     });
 
     let output_path = std::path::Path::new(output);
-    let mut use_case = TtsUseCase::new();
+    let use_case = TtsUseCase::new();
 
     println!("TTS 合成开始");
     println!("  引擎: {}", engine);
@@ -116,7 +116,7 @@ pub fn handle(
 /// 读取输入文本：存在的路径走文档提取（TXT/MD/EPUB/DOCX/PDF），否则按内联文本
 fn load_input_text(input: &str) -> Result<String> {
     if std::path::Path::new(input).exists() {
-        votex_infra::document::extract_text(std::path::Path::new(input))
+        votex_app::platform::text::extract_document_text(std::path::Path::new(input))
     } else {
         Ok(input.to_string())
     }
@@ -149,7 +149,8 @@ mod tests {
         // `votex_domain::tts::value_object::parse_tts_engine`（单一权威，返回 Option）。
         // `cosyvoice3` 是 F62 的回归点：此前 CLI 缺该分支会报「不支持的 TTS 引擎」。
         assert_eq!(parse_tts_engine("kokoro"), Some(EngineKind::Kokoro));
-        assert_eq!(parse_tts_engine("indextts2"), Some(EngineKind::IndexTTS2));
+        // 迁移别名：indextts2 归一到 IndexTTS25
+        assert_eq!(parse_tts_engine("indextts2"), Some(EngineKind::IndexTTS25));
         assert_eq!(parse_tts_engine("qwen3"), Some(EngineKind::Qwen3Tts));
         assert_eq!(parse_tts_engine("cosyvoice3"), Some(EngineKind::CosyVoice3));
         // 未知引擎必须返回 None 而非静默回落到默认引擎（避免用错引擎产出错误音频）

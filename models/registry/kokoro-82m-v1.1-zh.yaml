@@ -1,0 +1,30 @@
+id: kokoro-82m-v1.1-zh
+name: Kokoro-82M-v1.1-zh
+kind: Tts
+engine: Kokoro
+sub_dir: kokoro-82m-v1.1-zh
+files:
+  - name: kokoro-v1.1-zh.onnx
+    sha256: eefec708cbc7aba8e8129b5c2f7cb92e1fe7d281af1e1dd451592d9ff0714a0d
+    sources:
+      modelscope: https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/master/kokoro-v1.1-zh.onnx
+      huggingface: https://huggingface.co/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/main/kokoro-v1.1-zh.onnx
+      hf-mirror: https://hf-mirror.com/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/main/kokoro-v1.1-zh.onnx
+  - name: config.json
+    sha256: bc333efa5ce4ceff433c8c8e5d027a1eca0166001e4e4a62bea2d26ff7a46890
+    sources:
+      modelscope: https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/master/config.json
+      huggingface: https://huggingface.co/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/main/config.json
+      hf-mirror: https://hf-mirror.com/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/main/config.json
+  - name: voices.bin
+    sha256: 14cb6186c99e4f6016871405f62046c5df863ae27465cbdc4ee08be7dd703acd
+    sources:
+      modelscope: https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/master/voices.bin
+      huggingface: https://huggingface.co/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/main/voices.bin
+      hf-mirror: https://hf-mirror.com/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/main/voices.bin
+  - name: pinyin_to_zhuyin.json
+    sha256: 351373147b704588cf389d710c14e91d6739a598900acfa26fa4202c871ad700
+    sources:
+      modelscope: https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/master/pinyin_to_zhuyin.json
+      huggingface: https://huggingface.co/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/main/pinyin_to_zhuyin.json
+      hf-mirror: https://hf-mirror.com/onnx-community/Kokoro-82M-v1.1-zh-ONNX/resolve/main/pinyin_to_zhuyin.json

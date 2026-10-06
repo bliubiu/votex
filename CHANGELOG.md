@@ -3,6 +3,223 @@
 > 项目：声阅（votex）—— Rust 离线 TTS / ASR / 翻译 / OCR 多引擎工作台
 > 格式参考 Keep a Changelog；按日期倒序记录功能、修复与验证结论。
 
+## [2026-10-06] Paraformer 换源 sherpa 官方包 + ASR 跨引擎交叉验证
+
+### Paraformer（换源 + 正向识别打通）
+- **registry 换源**：`models/registry/paraformer.yaml` 从 FunASR 原始导出
+  （model_quant.onnx + tokens.json，缺 sherpa 所需 `vocab_size` 元数据、
+  加载会崩溃进程）换为 **sherpa-onnx 官方转换包**
+  `csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09`（model.int8.onnx +
+  tokens.txt，zh+en+yue，单文件直连 + sha256 校验，源：hf-mirror/huggingface）。
+  本地已下载落位（217MB，sha256 已录入清单）。FunASR 旧资产
+  （model_quant.onnx/tokens.json/config.yaml）留在磁盘但移出清单，
+  待用户确认后处置（AGENTS 禁止自动删模型）
+- **正向识别测试通过**：0.wav 识别「昨天是 monday today is 礼拜二 the day
+  after tomorrow 是星期三」——语义正确，加载+识别全套 3.3 秒；
+  FunASR 拒绝护栏测试改为条件适用（目录已有 sherpa 模型时跳过）
+
+### ASR 跨引擎 0.wav 交叉验证（新测试 asr_cross_engine_0wav_test）
+- **关键结论：0.wav 是中英混说音频**（"昨天是 Monday, today is 礼拜二,
+  the day after tomorrow 是星期三"），并非 firered 测试注释假定的纯中文
+  "昨天是星期一……"——5 个引擎独立输出英文星期词可证。此前 FireRed
+  2 例"失败"实为断言假定纯中文所致，模型本身识别正确
+- **六引擎横评**：Qwen3-ASR ✅（混说结构最完整）、SenseVoice ✅、
+  Paraformer（sherpa 包）✅、FireRed CTC/AED ✅、WeNet ⚠️（首尾正确，
+  中段同音字噪声）、Whisper-base ❌（经典重复幻觉「天天×52」，诊断用例）
+- **发现并修复 wenet 集成测试假绿**：其 test_wavs 指向不存在的
+  `models/asr/wenet/test_wavs`，全部测试一直在静默跳过（0 秒假通过）。
+  现指向共享测试集真跑：3/3 通过（8k.wav 长句识别质量良好），
+  0.wav 断言统一为星期语义口径
+
+### 验证
+- `cargo test --workspace`：**855 通过 / 0 失败 / 103 忽略**
+- registry 守护/一致性测试 10/10 通过
+- slow-models 实测：paraformer 3/3、wenet 3/3（首次真跑）、
+  firered 7/7、跨引擎 5/5
+
+## [2026-10-06] OCR：PP-OCRv6 Medium 字典修复 + cls 输入自适应 + 三模型对比评测
+
+### 修复
+- **v6-medium 字典缺失导致无法加载**：v6 medium/small 的 rec ONNX 未内嵌
+  字符表元数据（输出 18710 类 = 18708 字 + blank + space），引擎回退找
+  `ppocr_keys_v1.txt` 时目录内缺失。现落地官方 `ppocrv6_dict.txt`
+  （sha256 b5f2bfe2…，gitee/github 双源字节一致），并声明进
+  `paddleocr-v6-medium.yaml` / `paddleocr-v6-small.yaml` 下载清单——
+  此前用 v4 的 6623 字字典会输出乱码（实测验证过错误字典的失败形态）
+- **cls 方向分类输入尺寸自适应**：`classify_direction` 原写死 192×48，
+  v5-server 的 textline cls（80×160）直接报错。现从模型声明的静态输入
+  形状读取（动态维度回退 48×192），mobile/server 两类 cls 模型均可加载
+- OCR 四变体测试（v4/v5-mobile/v6-tiny/v6-medium）恢复并通过
+  （slow-models 门控）；v6-medium 对标准图实现逐字精确识别（8/8）
+
+### 评测（`ocr_rapidocr_eval_test.rs`，slow-models 门控）
+- 统一管线下三方对比（9 张合成图：3 字体/多字号/噪声/JPEG，LCS 字符准确率）：
+  | 模型 | 体积 | 准确率 | 置信度 | 耗时 |
+  |---|---|---|---|---|
+  | PP-OCRv6-medium | 168.3MB | 0.902 | 0.982 | ~2.1s |
+  | RapidOCR-v5-mobile | 21.0MB | 0.940 | 0.949 | ~1.3s |
+  | PP-OCRv5-server | 165.3MB | **0.972** | 0.978 | ~4.7s |
+- 结论：v5-server 准确率最高；RapidOCR-v5-mobile 效率之王（1/8 体积且
+  准确率反超 v6-medium）；v6-medium「你→尔」跨字体稳定误识别，置信度
+  虚高。经实验排除 BGR/RGB 通道序因素，属 rec 模型在特定输入尺度下的
+  固有字形混淆（det 裁剪尺度为主要变量）。经确认**默认引擎维持
+  PP-OCRv6-medium**（AGENTS.md 口径不变），报告见 `tmp/ocr_eval_report.md`
+
+## [2026-10-06] 质量审查修复：正确性缺陷批次一（P1/P2 共 14 项）
+
+> 依据深度审查报告（4 个专项审查代理逐文件阅读 + 人工核实）实施。
+> 验证基线：`cargo test --workspace` **855 通过 / 0 失败 / 97 忽略**；
+> clippy 警告 233 → 231（修复本身零新增）。剩余架构治理项（app 层 53 处
+> infra 直引、DTO 死代码、CLI/GUI 对等性、clippy 清零）为下一批次。
+
+### ASR（正确性）
+- **非 WAV 输入静默返回 5 秒静音 → 明确报错/转码**：`AsrUseCase::load_audio`
+  此前对 mp3/m4a/flac 等格式 warn 后返回静音并照常识别，产出与输入无关的垃圾
+  字幕（批量 ASR 默认扩展名即含 mp3，必然踩中）。现：WAV 直读；压缩格式经
+  ffmpeg 解码为 WAV 后识别（infra 新增 `FfmpegEncoder::decode_to_wav`，
+  `-vn -map a:0?` 忽略容器视频轨，临时文件用后即删）；未知格式返回
+  `AsrError::UnsupportedFormat`（VA004，此前从未被使用）
+- **空识别切片不推进时间轴**：静音切片不累计 `offset_ms`，其后字幕整体提前
+  一个切片时长——推进改为无条件执行
+- **Paraformer 伪特征修复 + 进程崩溃护栏**：原"特征提取"只把帧能量乘线性
+  系数填满 80 维（非 mel，识别输出为无效数据但注释标注"已完成"）。改走
+  sherpa-onnx 绑定（真实 fbank+LFR+CMVN，与 firered/qwen3 同范式）；实测发现
+  本地 FunASR 导出（model_quant.onnx）缺 sherpa 要求的 `vocab_size` 元数据，
+  sherpa C++ 端会 **abort 整个进程**——加载前明确拒绝并指引改用
+  sherpa-onnx 官方转换包（registry 源待换，见遗留）
+- **Qwen3-ASR 复查**：走 sherpa 分图包（conv 前端在模型内），无伪特征问题，
+  审查误报排除
+
+### TTS（正确性）
+- **Qwen3-TTS 同变体重复重载**：`ensure_loaded` 此前只要 `model_override`
+  非空就无条件 unload+load（GUI 每次都传），每次合成多等 10~60 秒。现对比
+  `loaded_is_small()` 与目标变体，同变体直接复用
+- **取消被当成成功**：闸门拒绝/取消时 `break` 跳出循环走成功路径，
+  `finish_all` 把半成品音频当正式产物落盘。改为返回错误（临时文件由
+  abort 清理，断点续转段已落盘可恢复）
+- **数字转中文补零**：`12000034` 读成「一千二百万三十四」——组间补零实现
+  （前导零组/跳过的全零组补一个「零」），并补上文档声称却从未实现的
+  「4 位数字+年 → 逐位读」（1998年 → 一九九八年）；新增组间零/年份回归测试
+
+### 字幕（正确性，三连缺陷）
+- **词级时间戳错位**：`from_word_timestamps` 用「句子数」当「词索引」取下一句
+  起始时间，偏差随句子数累积——改为独立词游标
+- **时间轴塌缩**：单句 500ms 下限在「句数×500ms > 总时长」时把几十条字幕
+  堆叠在结尾同一时刻——改为纯比例分配（总和恒 ≤ 总时长）
+- **LRC 丢小时位**：1h01m23s 写成 `[01:23.45]`——分钟位折入小时（`[61:23.45]`）
+- 三处均补时间断言单测（旧测试只断言文本，缺陷因此长期潜伏）
+
+### GUI（欺骗性 UI 清理）
+- **翻译/流水线/视频页假取消修复**：三页「取消/停止」只置 `is_running=false`，
+  后台任务继续跑且完成事件把「已取消」覆盖回「完成」。现在：三页 state 增加
+  `cancel_token`（复用 TTS 页正确模式）；`spawn_translate/spawn_pipeline/
+  spawn_video` 传递令牌；用例链路打通取消——翻译管线逐段检查（新增
+  `TranslationError::Cancelled` 路径）、流水线阶段边界+逐段检查
+  （`PipelineContext` 携带令牌）、视频生成各阶段边界检查（TTS/ASR 透传）
+- **视频生成**：临时文件从写死 cwd（并发互踩、失败残留）改为系统临时目录+
+  唯一名、成败都清理；第三份引擎名解析（静默把 whisper/sensevoice 当 TTS
+  引擎、未知值回退 Kokoro）删除，改走 domain `parse_tts_engine` 并报错
+
+### 任务/模型/持久化（状态与信任）
+- **task_manager 状态机竞态**：执行期间取消的任务会被执行线程无条件覆盖回
+  Completed/Failed——执行前跳过已取消任务、收尾时重读库状态保持 Cancelled；
+  `list_asr_tasks` 恒返回空列表 → 仓储 trait 新增 `find_all()`（SQLite 两实现
+  + 内存实现，按创建时间倒序）；`create_asr_task` 丢弃用户输出路径 →
+  `AsrTask` 新增 `output_path` 字段（JSON blob 存储，零迁移）并生效
+- **模型「释放」假释放**：`unload_model` 只改状态位不释放会话。现 TTS/ASR/OCR
+  用例新增按引擎真实卸载（`TtsUseCase::unload` / `AsrUseCase::unload` /
+  `OcrUseCase::unload_engine`），`ModelUseCase::unload_model` 路由到进程级
+  单例真实释放内存
+- **GUI 配置路径传播**：设置页保存写死相对路径 `application.yml`（双击启动时
+  cwd 任意会写错位置）——`GuiHandles`/`AppState` 传播 bootstrap 的
+  `config_path`，设置页按其读写
+- **OCR 分页更新加事务**：主表 UPDATE 与页面 INSERT 各自自动提交，中途失败
+  留下不一致（与 save() 的事务承诺矛盾）——`unchecked_transaction` 包裹；
+  页面结果序列化失败由静默写 NULL 改为报错留痕
+
+### 安全/配置
+- **配置加密闭环补全**：`decrypt_value` 全仓库零调用、读取路径拿 `ENC(...)`
+  密文当明文 key 用——`ConfigCrypto::decrypt_config_content` 新增（与加密
+  同字段清单对称），接入 `ConfigLoader::from_file/load_optional`；解密失败
+  （密钥丢失/文件跨机复制）保留密文原值并告警；加密↔解密往返 + 失败保留
+  原值均有单测
+
+### 引擎身份（路由正确性）
+- **云端 Provider 谎报 engine_kind**：Azure/阿里云 ASR 返回 `SenseVoice`、
+  TTS 返回 `Kokoro`（4 处）——按 kind 路由/列音色会混淆云端与本地引擎。
+  改返回 `AzureAsr/AliyunAsr/AzureTts/AliyunTts`（变体早已存在且
+  parse_tts_engine 已接线），音色归属随字段自动修正
+
+### 测试基建
+- **集成测试 slow-models 门控**（docs/23 §9.6 遗留待办）：19 个会加载真实
+  模型的 tests/ 集成测试补 `cfg_attr(not(feature = "slow-models"), ignore)`，
+  此前 `cargo test` 全目标默认全跑（FireRedASR 一个就 9 分钟且 2 例失败）
+- **环境依赖测试缺失即跳过**：indextts25 金标对拍（tmp/indextts25_refs/）、
+  g2p/phoneme/tokenizer（tmp/novel.txt、本地模型文件）在依赖物缺失时打印
+  提示并跳过，不再假失败
+- 新增：Paraformer 拒绝护栏测试、配置加密闭环测试、数字补零/年份测试、
+  字幕时间断言测试
+
+### 遗留（下一批次）
+- Paraformer registry 源需换 sherpa-onnx 官方转换包
+  （sherpa-onnx-paraformer-zh-*），换源后补正向识别测试
+- FireRedASR 集成测试 2 例失败（0.wav 识别不出内容）——模型质量问题，
+  已被门控隔离，待排查
+- 架构治理：app 层 53 处 `votex_infra::` 直引收敛、DTO 死代码处置、
+  引擎名解析归一、CLI video 改走用例、GUI task_runner 参数透传补齐、
+  clippy 231 条清零
+
+## [2026-10-06] 移除 IndexTTS2，IndexTTS-2.5 全面替代
+
+### ASR / Qwen3-ASR 链路补全（sherpa-onnx）
+- **模型资产补全**：落位 sherpa-onnx 官方预转换包 `sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25`
+  （conv_frontend 43MB + encoder.int8 174MB + decoder.int8 721MB + tokenizer/，共 ~943MB）至
+  `models/asr/qwen3-asr/`；此前目录内仅有 safetensors 原始权重，无任何 ONNX，链路不可用
+- **Provider 重写**：`qwen3_asr.rs` 从无效的 ort 单模型 stub 重写为 sherpa-onnx 绑定
+  （`OfflineQwen3ASRModelConfig` 三图 + tokenizer 目录，与 firered_asr 同范式）；
+  AsrProvider trait 与 `EngineKind::Qwen3Asr` 不变，app/GUI 层零改动
+- **下载链路**：`archive.rs` 新增 `tarbz2` 压缩包类型（bzip2 + tar，成员提取含路径穿越防护），
+  registry `qwen3-asr.yaml` 重写为 sherpa 包逐成员声明（sha256 + size + archive），支持一键重下
+- **e2e 验证通过**：IndexTTS-2.5 合成粤语短句 → Qwen3-ASR 识别「今日天气极好，我一起去饮茶了。」，
+  与 SenseVoice 结果一致；能力边界：29 语言 + 22 中国方言（含粤语广东/香港口音、吴语、闽南语）
+
+### 修复
+- `model_registry_consistency_test` 两处既有失败：白名单缺 `IndexTTS25/OnnxRuntime`；
+  目录推导未处理 `target_dir` 字段（onnxruntime 误判到 models/other/）
+
+### TTS / 引擎清理（破坏性变更）
+- **移除 IndexTTS2（2.0）引擎**：模型无语言/方言 token（无 `<|yue|>`、无 `lang_id` 输入），
+  不支持粤语，且此前 `supported_dialects` 声明的粤语/闽南语 Native 支持为错误元数据
+  （对应音色 yue_male/nan_male 不存在）。删除 `indextts2.rs`（~935 行）、registry 清单
+  `indextts2.yaml` 及慢速集成测试；`models/tts/indextts2/`（4.5G）待用户确认后删除
+- **迁移别名**：历史串 `indextts2` / `indextts` / `IndexTTS2`（配置、CLI、持久化任务）统一
+  归一到 `IndexTTS25`，旧数据无缝续用
+- **同步面**：EngineKind 变体、TtsUseCase/ModelUseCase/VideoGenerate、EngineLoader 候选表、
+  GUI 四页面引擎下拉 + 引导页下载勾选、voice_library 音色库根目录（改由 WorkspacePaths 直推，
+  不再借道 indextts2 路径）、CLI 帮助文本、docs/01/02/03/05/09、AGENTS.md 技术栈
+- **粤语能力收敛**：离线 TTS 粤语仅 IndexTTS-2.5 原生支持（`<|yue|>` + lang_id，金标已验证）；
+  GUI 语言下拉随引擎联动（昨日已改），闽南语选项移除
+
+## [2026-10-05] IndexTTS-2.5 Rust 移植完成（粤语原生）
+
+### TTS / IndexTTS-2.5（新增引擎）
+- **Rust 端到端移植**（蓝本 docs/25，8 任务 #41~#48 全部完成）：基于 yunfengwang
+  fp32 分图 ONNX（11.7GB，8 session：gpt_prefill/gpt_step/cfm_estimator/semantic_model/bigvgan…），
+  无 Python 依赖（uvx 参考实现仅作金标对拍）
+- **分级金标验收全过**：前端 token 逐 id 一致（含 100 语言修正修复 `<|yue|>` 未注册的上游
+  off-by-one）；GPT greedy 真实模型逐 token 一致（硬契约）；CFM ≈1e-5；BigVGAN **逐位 0 误差**；
+  端到端粤语合成 3.55s wav 落盘（`tmp/indextts25_e2e_yue.wav`）
+- **wetext 归一化真实移植（#49）**：`normalizer.rs` 三层结构（rustfst FST 引擎 /
+  wetext nbest=1 快路径 / 参考实现包装层），FST 资产逐字节取自 wetext 0.1.8 wheel
+  内嵌（13.6MB，zh+en TN）；**金标 50 例逐例精确相等**（含 en 无数字文本差异面，
+  修正 wetext-rs 上游的门控偏差）；`use_normalization=true` 时 zh/zhen/en 生效
+- **引擎接入**：`EngineKind::IndexTTS25`（CLI/GUI 串 `indextts25`）——TtsUseCase / 模型管理 /
+  EngineLoader / GUI 四页面 / task_runner 全链路；音色 = `prompts/<id>.wav` 零样本克隆；
+  方言：普通话 + 粤语 Native（闽南语/吴语 token 越界，不支持）
+- **长文本粤语 e2e（#51）**：tmp/e2e_ch1.txt（三章小说）多段合成，`VOTEX_E2E_MAX_SEGMENTS`
+  控制段数上限，落盘 `tmp/indextts25_e2e_yue_ch1.wav`
+- 已知限制：首次加载 ~33s（fp32 11.7GB），speaker 缓存后复用
+
 ## [2026-10-03] CosyVoice 复述修复 + 三引擎质量对标
 
 ### TTS / CosyVoice 3.0

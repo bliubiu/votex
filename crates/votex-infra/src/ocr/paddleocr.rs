@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use image::DynamicImage;
 use ndarray::Array4;
 use std::path::Path;
+use std::sync::Arc;
 use votex_domain::error::OcrError;
 use votex_domain::model::entity::Model;
 use votex_domain::model::value_object::EngineKind;
@@ -82,27 +83,46 @@ impl PaddleOcrModelVariant {
 ///
 /// 流水线：文本检测(det) → 方向分类(cls) → 文字识别(rec)
 pub struct PaddleOcrEngine {
-    variant: PaddleOcrModelVariant,
+    /// 当前模型变体（决定 det/cls/rec 的文件名集合）
+    ///
+    /// 走 `EngineState` 而非裸字段：`load()` 会在 `&self` 下重新推导变体
+    /// （用户可能在 GUI 里切换 v4/v5/v6），裸字段无法在共享实例上写入。
+    variant: EngineState<PaddleOcrModelVariant>,
     det_state: EngineState<ort::session::Session>,
     cls_state: EngineState<ort::session::Session>,
     rec_state: EngineState<ort::session::Session>,
-    dict: Vec<String>,
+    /// 识别字典（字符表）
+    ///
+    /// 用 `Arc<[String]>` 而非 `Vec<String>`：识别路径每解码一个 token 都要按下标
+    /// 取字符，包在 `Arc` 里可让 `&str` 借用跨闭包存活，无需逐次加锁。
+    dict: EngineState<Arc<[String]>>,
 }
 
 impl PaddleOcrEngine {
     pub fn new() -> Self {
-        Self::with_variant(PaddleOcrModelVariant::V6Tiny)
+        // 默认使用 PP-OCRv6 Medium：识别精度显著高于 Tiny/Mobile 变体
+        // （Tiny/Mobile 对"你→尔"等字形近似字存在稳定单字误差）
+        Self::with_variant(PaddleOcrModelVariant::V6Medium)
     }
 
     /// 创建引擎并指定模型变体
     pub fn with_variant(variant: PaddleOcrModelVariant) -> Self {
+        let variant_state = EngineState::new();
+        variant_state.load(variant);
         Self {
-            variant,
+            variant: variant_state,
             det_state: EngineState::new(),
             cls_state: EngineState::new(),
             rec_state: EngineState::new(),
-            dict: Vec::new(),
+            dict: EngineState::new(),
         }
+    }
+
+    /// 读取当前模型变体（未设置时回退到构造时传入的默认值）
+    fn variant(&self) -> PaddleOcrModelVariant {
+        self.variant
+            .with(|v| *v)
+            .unwrap_or(PaddleOcrModelVariant::V6Medium)
     }
 
     /// 加载字典：优先从 ONNX 元数据提取，回退到文件
@@ -154,10 +174,11 @@ impl PaddleOcrEngine {
     }
 
     /// 从模型目录加载全部模型
-    pub fn load_from_dir(&mut self, model_dir: &Path) -> Result<()> {
-        let det_path = model_dir.join(self.variant.det_filename());
-        let cls_path = model_dir.join(self.variant.cls_filename());
-        let rec_path = model_dir.join(self.variant.rec_filename());
+    pub fn load_from_dir(&self, model_dir: &Path) -> Result<()> {
+        let variant = self.variant();
+        let det_path = model_dir.join(variant.det_filename());
+        let cls_path = model_dir.join(variant.cls_filename());
+        let rec_path = model_dir.join(variant.rec_filename());
 
         if !det_path.exists() {
             anyhow::bail!("检测模型不存在: {:?}", det_path);
@@ -181,14 +202,14 @@ impl PaddleOcrEngine {
             .context("加载识别模型失败")?;
 
         // 加载字典：优先从 ONNX 元数据提取（所有版本均可），回退到文件
-        let dict = Self::load_dict(model_dir, &rec_session, self.variant)?;
-        self.dict = dict;
+        let dict = Self::load_dict(model_dir, &rec_session, variant)?;
+        self.dict.load(Arc::from(dict));
 
         self.rec_state.load(rec_session);
 
         tracing::info!(
             "PaddleOCR 模型加载完成（det+cls+rec），字典条目数: {}",
-            self.dict.len()
+            self.dict.with(|d| d.len()).unwrap_or(0)
         );
         Ok(())
     }
@@ -196,7 +217,7 @@ impl PaddleOcrEngine {
     /// 识别图片中的文字（含取消和进度）
     #[allow(unused_variables)]
     pub fn recognize_with_cancel(
-        &mut self,
+        &self,
         image_path: &Path,
         params: &OcrParams,
         cancel_token: &CancellationToken,
@@ -299,7 +320,7 @@ impl PaddleOcrEngine {
     }
 
     /// 文本检测：DBNet
-    fn detect_text(&mut self, img: &DynamicImage) -> Result<Vec<(TextBox, DynamicImage)>> {
+    fn detect_text(&self, img: &DynamicImage) -> Result<Vec<(TextBox, DynamicImage)>> {
         self.det_state.with_mut(|session| {
             let (orig_h, orig_w) = (img.height() as f32, img.width() as f32);
             let max_side = 960.0;
@@ -432,28 +453,49 @@ impl PaddleOcrEngine {
     }
 
     /// 方向分类
-    fn classify_direction(&mut self, crop: &DynamicImage) -> Result<DynamicImage> {
+    fn classify_direction(&self, crop: &DynamicImage) -> Result<DynamicImage> {
         self.cls_state.with_mut(|session| {
-            let resized = crop.resize_exact(192, 48, image::imageops::FilterType::Triangle);
+            // cls 模型输入尺寸因变体而异（mobile cls 48×192，v5-server textline cls 80×160），
+            // 从模型声明的静态输入形状读取；动态维度（-1）或读取失败时回退 48×192
+            let (cls_h, cls_w) = session
+                .inputs()
+                .first()
+                .and_then(|i| match i.dtype() {
+                    ort::value::ValueType::Tensor { shape, .. } => {
+                        let h = shape.get(2).copied().unwrap_or(48);
+                        let w = shape.get(3).copied().unwrap_or(192);
+                        Some((
+                            if h > 0 { h as u32 } else { 48 },
+                            if w > 0 { w as u32 } else { 192 },
+                        ))
+                    }
+                    _ => None,
+                })
+                .unwrap_or((48, 192));
+
+            let resized =
+                crop.resize_exact(cls_w, cls_h, image::imageops::FilterType::Triangle);
             let rgb = resized.to_rgb8();
 
             let mean = [0.5f32, 0.5, 0.5];
             let std_dev = [0.5f32, 0.5, 0.5];
-            let mut input_tensor = vec![0.0f32; 3 * 48 * 192];
+            let mut input_tensor = vec![0.0f32; 3 * (cls_h as usize) * (cls_w as usize)];
 
-            for y in 0..48u32 {
-                for x in 0..192u32 {
+            for y in 0..cls_h {
+                for x in 0..cls_w {
                     let pixel = rgb.get_pixel(x, y);
                     for c in 0..3 {
                         let val = pixel[c] as f32 / 255.0;
                         let normalized = (val - mean[c]) / std_dev[c];
-                        let idx = c * 48 * 192 + y as usize * 192 + x as usize;
+                        let idx = c * (cls_h as usize) * (cls_w as usize)
+                            + y as usize * cls_w as usize
+                            + x as usize;
                         input_tensor[idx] = normalized;
                     }
                 }
             }
 
-            let input = Array4::from_shape_vec((1, 3, 48, 192), input_tensor)?;
+            let input = Array4::from_shape_vec((1, 3, cls_h as usize, cls_w as usize), input_tensor)?;
             let input_value = ort::value::Value::from_array(input)?;
             let outputs = session.run(ort::inputs![input_value])?;
             let probs = outputs[0].try_extract_array::<f32>()?;
@@ -467,7 +509,7 @@ impl PaddleOcrEngine {
     }
 
     /// 文字识别：CRNN + CTC 解码
-    fn recognize_text(&mut self, crop: &DynamicImage) -> Result<(String, f32)> {
+    fn recognize_text(&self, crop: &DynamicImage) -> Result<(String, f32)> {
         self.rec_state.with_mut(|session| {
             let img_h = 48u32;
             let img_w = ((crop.width() as f32 / crop.height() as f32) * img_h as f32).min(640.0) as u32;
@@ -522,8 +564,10 @@ impl PaddleOcrEngine {
                 }
 
                 if max_idx != 0 && max_idx != last_idx {
-                    if max_idx - 1 < self.dict.len() {
-                        text.push_str(&self.dict[max_idx - 1]);
+                    let dict_guard = self.dict.get();
+                    let dict_ref = dict_guard.as_ref().and_then(|d| d.as_ref());
+                    if max_idx >= 1 && (max_idx as usize - 1) < dict_ref.map_or(0, |d| d.len()) {
+                        text.push_str(&dict_ref.expect("上一步已确认长度")[max_idx as usize - 1]);
                         total_conf += max_val;
                         char_count += 1;
                     }
@@ -555,36 +599,39 @@ impl OcrProvider for PaddleOcrEngine {
         EngineKind::PaddleOCR
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), OcrError> {
+    fn load(&self, model: &Model) -> Result<(), OcrError> {
         // 从 model.id 推导模型变体，确保加载正确的文件名集合
-        self.variant = PaddleOcrModelVariant::from_model_id(model.id.as_str());
+        self.variant
+            .load(PaddleOcrModelVariant::from_model_id(model.id.as_str()));
         let model_dir = std::path::Path::new(&model.name);
         self.load_from_dir(model_dir)
             .map_err(|e| OcrError::LoadFailed(format!("PaddleOCR 加载失败: {}", e)))
     }
 
-    fn unload(&mut self) -> Result<(), OcrError> {
+    fn unload(&self) -> Result<(), OcrError> {
         self.det_state.unload();
         self.cls_state.unload();
         self.rec_state.unload();
-        self.dict.clear();
+        self.dict.unload();
         tracing::info!("PaddleOCR 引擎已释放");
         Ok(())
     }
 
-    fn recognize(&mut self, image_path: &Path, params: &OcrParams) -> Result<OcrResult, OcrError> {
+    fn recognize(&self, image_path: &Path, params: &OcrParams) -> Result<OcrResult, OcrError> {
         let cancel = CancellationToken::new();
         self.recognize_with_cancel(image_path, params, &cancel, None)
     }
 
     fn recognize_with_cancel(
-        &mut self,
+        &self,
         image_path: &Path,
         params: &OcrParams,
         cancel_token: &CancellationToken,
         on_progress: ProgressCallback,
     ) -> Result<OcrResult, OcrError> {
-        self.recognize_with_cancel(image_path, params, cancel_token, on_progress)
+        // 必须用完全限定名调用 inherent 方法。
+        // 裸写 `self.recognize_with_cancel(..)` 会解析回本 trait 方法 → 无限递归 → 栈溢出。
+        PaddleOcrEngine::recognize_with_cancel(self, image_path, params, cancel_token, on_progress)
     }
 
     fn is_loaded(&self) -> bool {

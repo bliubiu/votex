@@ -349,31 +349,41 @@ impl DirectionalModel {
 
 /// Opus-MT ONNX 翻译引擎（支持双向 zh↔en）
 pub struct OpusMtProvider {
-    zh_en: Option<DirectionalModel>,
-    en_zh: Option<DirectionalModel>,
+    /// zh→en 方向模型
+    ///
+    /// 走 `EngineState`：`TranslationProvider::load` 是 `&self`，
+    /// 裸 `Option` 无法在共享实例上写入。
+    /// 内层 `DirectionalModel` 本身已全部由 `EngineState` 承载，
+    /// 因此整个模型对象可安全跨线程共享。
+    zh_en: EngineState<DirectionalModel>,
+    /// en→zh 方向模型
+    en_zh: EngineState<DirectionalModel>,
 }
 
 impl OpusMtProvider {
     pub fn new() -> Self {
-        Self { zh_en: None, en_zh: None }
+        Self {
+            zh_en: EngineState::new(),
+            en_zh: EngineState::new(),
+        }
     }
 
     /// 加载 zh→en 模型
-    pub fn load_zh_en_from_dir(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    pub fn load_zh_en_from_dir(&self, model_dir: &Path) -> Result<(), TranslationError> {
         let model = DirectionalModel::load_from_dir(model_dir)?;
-        self.zh_en = Some(model);
+        self.zh_en.load(model);
         Ok(())
     }
 
     /// 加载 en→zh 模型
-    pub fn load_en_zh_from_dir(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    pub fn load_en_zh_from_dir(&self, model_dir: &Path) -> Result<(), TranslationError> {
         let model = DirectionalModel::load_from_dir(model_dir)?;
-        self.en_zh = Some(model);
+        self.en_zh.load(model);
         Ok(())
     }
 
     /// 兼容旧接口（默认加载 zh→en）
-    pub fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    pub fn load_from_dir(&self, model_dir: &Path) -> Result<(), TranslationError> {
         self.load_zh_en_from_dir(model_dir)
     }
 }
@@ -392,15 +402,23 @@ impl TranslationProvider for OpusMtProvider {
             return Err(TranslationError::EmptyText);
         }
 
+        // 守卫必须活到 `model.translate()` 结束：
+        // `and_then(|g| g.as_ref())` 会让守卫在闭包返回时析构，
+        // 借出的 `&DirectionalModel` 随之失效。
+        let (zh_en_guard, en_zh_guard) = (self.zh_en.get(), self.en_zh.get());
         let model = match direction {
             TranslationDirection::ZhToEn
             | TranslationDirection::Auto
             | TranslationDirection::ByLanguagePair { source: _, target: _ } => {
-                self.zh_en.as_ref()
+                zh_en_guard
+                    .as_ref()
+                    .and_then(|g| g.as_ref())
                     .ok_or(TranslationError::ModelNotLoaded)?
             }
             TranslationDirection::EnToZh => {
-                self.en_zh.as_ref()
+                en_zh_guard
+                    .as_ref()
+                    .and_then(|g| g.as_ref())
                     .ok_or(TranslationError::UnsupportedDirection)?
             }
         };
@@ -415,26 +433,26 @@ impl TranslationProvider for OpusMtProvider {
         model.translate(text)
     }
 
-    fn load(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    fn load(&self, model_dir: &Path) -> Result<(), TranslationError> {
         // 单个目录只对应一个方向；默认按 zh→en 加载，保持与旧接口一致
         self.load_from_dir(model_dir)
     }
 
-    fn unload(&mut self) {
-        self.zh_en = None;
-        self.en_zh = None;
+    fn unload(&self) {
+        self.zh_en.unload();
+        self.en_zh.unload();
     }
 
     fn is_loaded(&self) -> bool {
-        self.zh_en.is_some() || self.en_zh.is_some()
+        self.zh_en.is_loaded() || self.en_zh.is_loaded()
     }
 
     fn supported_pairs(&self) -> Vec<(String, String)> {
         let mut pairs = Vec::new();
-        if self.zh_en.is_some() {
+        if self.zh_en.is_loaded() {
             pairs.push(("zh".to_string(), "en".to_string()));
         }
-        if self.en_zh.is_some() {
+        if self.en_zh.is_loaded() {
             pairs.push(("en".to_string(), "zh".to_string()));
         }
         pairs

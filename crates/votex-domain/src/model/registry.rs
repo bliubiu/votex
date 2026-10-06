@@ -25,19 +25,25 @@ pub struct TokenizerConfig {
 }
 
 /// 模型清单条目，对应 `models/registry/{id}.yaml`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelRegistryEntry {
     /// 模型唯一标识（也是默认子目录名）
     pub id: String,
     /// 显示名称
     pub name: String,
-    /// 模型类型：Tts / Asr / Ocr / Translation
+    /// 模型类型：Tts / Asr / Ocr / Translation / Runtime
     pub kind: String,
-    /// 引擎名：Kokoro / IndexTTS2 / Whisper / PaddleOCR / EasyOcr / SenseVoice / Nllb
+    /// 引擎名：Kokoro / IndexTTS25 / Whisper / PaddleOCR / EasyOcr / SenseVoice / Nllb
     pub engine: String,
     /// 存储子目录（覆盖 id），如 paddleocr-v5-mobile → "paddleocr-v5"
     #[serde(default)]
     pub sub_dir: Option<String>,
+    /// 直接指定存储目录（相对 models/），优先级高于 kind + sub_dir
+    ///
+    /// ONNX Runtime 这类运行时依赖不属于任何模型分类，
+    /// 需要直接落在 `models/runtime/` 而非 `models/<kind>/<id>/`。
+    #[serde(default)]
+    pub target_dir: Option<String>,
     /// 分词器配置（可选，默认无偏移）
     #[serde(default)]
     pub tokenizer: Option<TokenizerConfig>,
@@ -45,8 +51,21 @@ pub struct ModelRegistryEntry {
     pub files: Vec<ModelFileEntry>,
 }
 
-/// 单个模型文件条目
+/// 压缩包解压配置
+///
+/// 部分官方发布物只提供压缩包（如 ONNX Runtime 的 .tgz / .zip），
+/// 需要下载后解压提取其中的单个成员文件才能使用。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchiveSpec {
+    /// 压缩包类型：`zip` 或 `targz`
+    #[serde(rename = "type")]
+    pub archive_type: String,
+    /// 包内待提取的成员路径（如 "lib/libonnxruntime.so"）
+    pub member: String,
+}
+
+/// 单个模型文件条目
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelFileEntry {
     /// 相对于模型子目录的路径（如 "kokoro-v1.0.int8.onnx" 或 "voices/af_heart.bin"）
     pub name: String,
@@ -63,6 +82,41 @@ pub struct ModelFileEntry {
     pub required: bool,
     /// 镜像源列表，键为镜像名（如 "huggingface"），值为下载 URL
     pub sources: HashMap<String, String>,
+    /// 限定适用的操作系统（windows / linux / macos）；为空表示全平台通用
+    ///
+    /// ONNX Runtime 这类平台相关的运行时依赖，三个平台的产物各不相同，
+    /// 全部下载既浪费带宽也会让就绪检测误判，因此按当前平台过滤。
+    #[serde(default)]
+    pub platforms: Option<Vec<String>>,
+    /// 下载到的是压缩包时的解压配置
+    #[serde(default)]
+    pub archive: Option<ArchiveSpec>,
+}
+
+impl ModelFileEntry {
+    /// 是否适用于当前操作系统
+    ///
+    /// `platforms` 为空表示全平台通用；否则只要命中当前 OS 即适用。
+    pub fn matches_current_platform(&self) -> bool {
+        let current = if cfg!(target_os = "windows") {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else if cfg!(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd"
+        )) {
+            "linux"
+        } else {
+            return true;
+        };
+
+        match &self.platforms {
+            None => true,
+            Some(list) => list.iter().any(|p| p.trim().eq_ignore_ascii_case(current)),
+        }
+    }
 }
 
 impl ModelRegistryEntry {
@@ -73,12 +127,18 @@ impl ModelRegistryEntry {
             "Asr" => "asr",
             "Ocr" => "ocr",
             "Translation" => "translation",
+            "Runtime" => "runtime",
             _ => "other",
         }
     }
 
     /// 获取完整存储路径（自动按 kind 分类到 tts/asr/ocr/translation 子目录）
+    ///
+    /// `target_dir` 存在时直接采用（运行时依赖如 ONNX Runtime 落在 `runtime/`）。
     pub fn storage_dir(&self) -> String {
+        if let Some(dir) = self.target_dir.as_deref() {
+            return dir.trim_matches('/').to_string();
+        }
         let leaf = self.sub_dir.as_deref().unwrap_or(&self.id);
         format!("{}/{}", self.kind_dir(), leaf)
     }
@@ -103,6 +163,7 @@ mod tests {
             sub_dir: Some("paddleocr-v6".into()),
             tokenizer: None,
             files: vec![],
+                ..Default::default()
         };
         assert_eq!(entry.storage_dir(), "ocr/paddleocr-v6");
     }
@@ -117,6 +178,7 @@ mod tests {
             sub_dir: None,
             tokenizer: None,
             files: vec![],
+                ..Default::default()
         };
         assert_eq!(entry.storage_dir(), "tts/kokoro-82m");
     }
@@ -131,6 +193,7 @@ mod tests {
             sub_dir: None,
             tokenizer: None,
             files: vec![],
+                ..Default::default()
         };
         assert_eq!(entry.storage_dir(), "translation/nllb-200-distilled-600m");
     }
@@ -145,6 +208,7 @@ mod tests {
             sub_dir: None,
             tokenizer: None,
             files: vec![],
+                ..Default::default()
         };
         assert_eq!(entry.storage_dir(), "asr/whisper-base");
     }

@@ -3,11 +3,12 @@ name = "votex-gui"
 version.workspace = true
 edition.workspace = true
 
+# 分层约束：本 crate 是表现层，只允许依赖 votex-app / votex-domain。
+# 基础设施（ONNX Runtime、SQLite、模型路径）一律经 votex-app::platform 门面访问。
 [dependencies]
 votex-domain = { workspace = true }
-serde_yml = { workspace = true }
 votex-app = { workspace = true }
-votex-infra = { workspace = true }
+serde_yml = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 anyhow = { workspace = true }

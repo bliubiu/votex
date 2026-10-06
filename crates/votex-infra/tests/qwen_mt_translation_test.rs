@@ -24,6 +24,7 @@ fn check_env() -> Option<votex_infra::translation::qwen_mt::QwenMtProvider> {
     }
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test qwen_mt_translation_test --features slow-models")]
 #[test]
 fn test_qwen_mt_zh_to_en() {
     let provider = match check_env() {
@@ -45,6 +46,7 @@ fn test_qwen_mt_zh_to_en() {
     );
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test qwen_mt_translation_test --features slow-models")]
 #[test]
 fn test_qwen_mt_en_to_zh() {
     let provider = match check_env() {
@@ -65,6 +67,7 @@ fn test_qwen_mt_en_to_zh() {
     );
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test qwen_mt_translation_test --features slow-models")]
 #[test]
 fn test_qwen_mt_auto_direction() {
     let provider = match check_env() {
@@ -80,6 +83,7 @@ fn test_qwen_mt_auto_direction() {
     println!("自动方向(中): '今天天气真好。' -> '{}'", translated);
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test qwen_mt_translation_test --features slow-models")]
 #[test]
 fn test_qwen_mt_empty_text() {
     let provider = match check_env() {
@@ -91,6 +95,7 @@ fn test_qwen_mt_empty_text() {
     assert!(result.is_err(), "空文本应返回错误");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test qwen_mt_translation_test --features slow-models")]
 #[test]
 fn test_qwen_mt_long_text() {
     let provider = match check_env() {

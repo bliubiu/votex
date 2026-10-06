@@ -4,7 +4,7 @@
 //!
 //! # 实现列表
 //!
-//! - `SentencePieceBpeTokenizer`：SentencePiece BPE 分词器，用于 IndexTTS2、M2M-100、NLLB 等
+//! - `SentencePieceBpeTokenizer`：SentencePiece BPE 分词器，用于 M2M-100、NLLB 等翻译模型
 //! - `ByteLevelBpeTokenizer`：ByteLevel BPE 分词器（GPT-2/Qwen2 风格），用于 CosyVoice3
 //! - `CharLookupTokenizer`：单字查表分词器，用于 Kokoro
 //!

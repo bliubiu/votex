@@ -33,12 +33,12 @@ pub trait TranslationProvider: Send + Sync {
     /// 从模型目录加载（离线引擎覆写）
     ///
     /// 在线引擎与词典引擎保持默认实现即可。
-    fn load(&mut self, _model_dir: &Path) -> Result<(), TranslationError> {
+    fn load(&self, _model_dir: &Path) -> Result<(), TranslationError> {
         Ok(())
     }
 
     /// 释放模型资源
-    fn unload(&mut self) {}
+    fn unload(&self) {}
 
     /// 模型是否已加载
     fn is_loaded(&self) -> bool {

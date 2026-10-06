@@ -1,0 +1,41 @@
+id: hy-mt-1.5-1.8b
+name: HY-MT1.5 1.8B 多语言翻译
+kind: Translation
+engine: HyMt1_5
+# 存储子目录：与代码查找目录保持一致（代码按 hy-mt-1.5 查找）
+sub_dir: hy-mt-1.5
+files:
+  # ONNX 模型（从 onnx-community 社区预导出版本获取）
+  # 仅保留 int4 量化版（~1.4GB）：运行时 hy_mt.rs 只加载 model_q4.onnx，
+  # fp32 的 model.onnx（~3.3GB）从未被读取，声明它只会让 `model verify` 误报缺失
+  - name: model_q4.onnx
+    sha256: 9ffed3b4d2321e42e4c79b970ee73ff80bd10fd4f89208a2b6ee6a5ef59b800c
+    sources:
+      huggingface: https://huggingface.co/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/onnx/model_q4.onnx
+      hf-mirror: https://hf-mirror.com/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/onnx/model_q4.onnx
+  - name: model_q4.onnx_data
+    sha256: ab975a558df7dbb1ed863d983e8d530e85eeb16de6f7028542b9c0af9a2222eb
+    sources:
+      huggingface: https://huggingface.co/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/onnx/model_q4.onnx_data
+      hf-mirror: https://hf-mirror.com/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/onnx/model_q4.onnx_data
+  # HuggingFace Tokenizer（使用 onnx-community 版本，与原始模型兼容）
+  - name: tokenizer.json
+    sha256: 1b119fa76913d752f1003222865691e56f69fbff53b257acc10f8fd183d4f70b
+    sources:
+      huggingface: https://huggingface.co/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/tokenizer.json
+      hf-mirror: https://hf-mirror.com/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/tokenizer.json
+  - name: tokenizer_config.json
+    sha256: 05b405b79c53d3616ee39e0387c300d4a631c168ff87c2d690c4334561340074
+    sources:
+      huggingface: https://huggingface.co/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/tokenizer_config.json
+      hf-mirror: https://hf-mirror.com/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/tokenizer_config.json
+  - name: config.json
+    sha256: 391307b3bab6318ea6987071ccb82e1502aa83bc19f52a93428f7efb9466ecaa
+    sources:
+      huggingface: https://huggingface.co/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/config.json
+      hf-mirror: https://hf-mirror.com/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/config.json
+  - name: generation_config.json
+    sha256: d350fa7971cdf384def814c0f21ee35b89ae9ca8608f7b7a1203e3a6111d4f5c
+    sources:
+      huggingface: https://huggingface.co/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/generation_config.json
+      hf-mirror: https://hf-mirror.com/onnx-community/HY-MT1.5-1.8B-ONNX/resolve/main/generation_config.json

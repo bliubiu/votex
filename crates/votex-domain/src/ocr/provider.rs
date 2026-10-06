@@ -10,21 +10,21 @@ pub trait OcrProvider: Send + Sync {
     fn engine_kind(&self) -> EngineKind;
 
     /// 加载模型到内存
-    fn load(&mut self, model: &Model) -> Result<(), OcrError>;
+    fn load(&self, model: &Model) -> Result<(), OcrError>;
 
     /// 释放模型资源
-    fn unload(&mut self) -> Result<(), OcrError>;
+    fn unload(&self) -> Result<(), OcrError>;
 
     /// 识别单张图片
     fn recognize(
-        &mut self,
+        &self,
         image_path: &std::path::Path,
         params: &OcrParams,
     ) -> Result<OcrResult, OcrError>;
 
     /// 识别单张图片（带取消和进度回调）
     fn recognize_with_cancel(
-        &mut self,
+        &self,
         image_path: &std::path::Path,
         params: &OcrParams,
         cancel_token: &CancellationToken,

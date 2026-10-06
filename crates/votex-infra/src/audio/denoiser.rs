@@ -105,7 +105,16 @@ fn spectral_subtraction(audio: &[f32], config: &DenoiseConfig) -> Vec<f32> {
     let freq_size = fft_size / 2 + 1;
     let mut noise_estimate = vec![0.0f32; freq_size];
     let mut output = vec![0.0f32; audio.len() + fft_size];
-    let mut overlap_count = vec![0usize; audio.len() + fft_size];
+    // 累积的窗权重（用于重叠相加归一化）
+    //
+    // 旧实现按「帧计数」归一化（overlap_count）。Hann 窗 + 50% 重叠满足
+    // COLA 性质（任一样本的窗权重之和恒为 1.0），本不应再额外除法；
+    // 除以帧数会把稳态振幅压到约 50%（-6 dB），且在窗口边缘因帧数变化
+    // 产生位置相关失真。改为除以窗权重之和后，任意 overlap 配置都成立
+    let mut weight_sum = vec![0.0f32; audio.len() + fft_size];
+
+    // 用于噪声估计的初始帧数
+    const NOISE_ESTIMATION_FRAMES: usize = 10;
 
     for frame_idx in 0..num_frames {
         let start = frame_idx * hop_size;
@@ -126,13 +135,13 @@ fn spectral_subtraction(audio: &[f32], config: &DenoiseConfig) -> Vec<f32> {
         // 计算幅度谱
         let mut magnitude: Vec<f32> = spectrum.iter().map(|&c| c.norm_sqr().sqrt()).collect();
 
-        // 前几帧用于噪声估计
-        if frame_idx < 10 {
-            for i in 0..freq_size {
-                noise_estimate[i] = noise_estimate[i] * config.alpha + magnitude[i] * (1.0 - config.alpha);
-            }
-            continue; // 前几帧不做降噪，只估计噪声
-        }
+        // 噪声估计阶段：先用「更新前」的估计做谱减（首帧估计为 0，等于直通），
+        // 再更新估计值。
+        //
+        // 旧实现在这里直接 `continue`，前 10 帧完全不参与重叠相加 ——
+        // fft_size=1024、overlap=0.5（hop=512）下覆盖到第 5120 个采样点，
+        // 16 kHz 时相当于**开头约 320 毫秒被静音**，对 ASR 而言等于丢掉开头内容。
+        let estimating = frame_idx < NOISE_ESTIMATION_FRAMES;
 
         // 频谱减法
         for i in 0..freq_size {
@@ -147,9 +156,9 @@ fn spectral_subtraction(audio: &[f32], config: &DenoiseConfig) -> Vec<f32> {
             }
         }
 
-        // 更新噪声估计（只在非语音段更新）
+        // 更新噪声估计：估计阶段无条件更新；其后只在非语音段更新
         let is_speech = magnitude.iter().sum::<f32>() > noise_estimate.iter().sum::<f32>() * 0.5;
-        if !is_speech {
+        if estimating || !is_speech {
             for i in 0..freq_size {
                 noise_estimate[i] = noise_estimate[i] * config.alpha + magnitude[i] * (1.0 - config.alpha);
             }
@@ -169,20 +178,20 @@ fn spectral_subtraction(audio: &[f32], config: &DenoiseConfig) -> Vec<f32> {
         let mut time_output = c2r.make_output_vec();
         c2r.process(&mut spectrum, &mut time_output).unwrap();
 
-        // 重叠相加
+        // 重叠相加（同时累积窗权重，供后续归一化使用）
         for i in 0..fft_size {
             let idx = start + i;
             if idx < output.len() {
                 output[idx] += time_output[i] / fft_size as f32;
-                overlap_count[idx] += 1;
+                weight_sum[idx] += window[i];
             }
         }
     }
 
-    // 归一化
+    // 归一化：除以窗权重之和（而非帧数），保证任意 overlap 配置下幅值正确
     for i in 0..audio.len() {
-        if overlap_count[i] > 0 {
-            output[i] /= overlap_count[i] as f32;
+        if weight_sum[i] > 1e-6 {
+            output[i] /= weight_sum[i];
         }
     }
 
@@ -215,16 +224,32 @@ pub fn denoise(audio: &AudioData, level: votex_domain::tts::value_object::Denois
         },
     };
 
-    let samples = if config.gate_threshold > 0.0 {
-        noise_gate(&audio.samples, audio.sample_rate, config.gate_threshold)
-    } else {
-        audio.samples.clone()
-    };
+    // 多声道必须按声道拆分后逐声道处理。
+    //
+    // `samples` 是 L,R,L,R 交错的一维流；旧实现整段交给单声道 FFT/OLA，
+    // 卷积会在左右声道样本之间来回跳跃，破坏声像与内容。
+    // （原单元测试只断言了 `channels == 2`，元数据没变，所以从未暴露该问题）
+    let channels = (audio.channels as usize).max(1);
 
-    let samples = if config.subtraction_factor > 0.0 && audio.sample_rate >= 8000 {
-        spectral_subtraction(&samples, &config)
+    let samples = if channels == 1 {
+        process_channel(&audio.samples, &config, audio.sample_rate)
     } else {
-        samples
+        let frames = audio.samples.len() / channels;
+        let mut interleaved = audio.samples.clone();
+        for ch in 0..channels {
+            // 拆分出单个声道
+            let channel_samples: Vec<f32> = (0..frames)
+                .map(|f| audio.samples[f * channels + ch])
+                .collect();
+            let processed = process_channel(&channel_samples, &config, audio.sample_rate);
+            // 重新交错写回
+            for (f, v) in processed.iter().enumerate() {
+                if f < frames {
+                    interleaved[f * channels + ch] = *v;
+                }
+            }
+        }
+        interleaved
     };
 
     Ok(AudioData {
@@ -232,6 +257,21 @@ pub fn denoise(audio: &AudioData, level: votex_domain::tts::value_object::Denois
         sample_rate: audio.sample_rate,
         channels: audio.channels,
     })
+}
+
+/// 对单个声道的采样执行完整降噪链路（噪声门 + 频谱减法）
+fn process_channel(samples: &[f32], config: &DenoiseConfig, sample_rate: u32) -> Vec<f32> {
+    let gated = if config.gate_threshold > 0.0 {
+        noise_gate(samples, sample_rate, config.gate_threshold)
+    } else {
+        samples.to_vec()
+    };
+
+    if config.subtraction_factor > 0.0 && sample_rate >= 8000 {
+        spectral_subtraction(&gated, config)
+    } else {
+        gated
+    }
 }
 
 /// 便捷函数：低强度降噪（噪声门）

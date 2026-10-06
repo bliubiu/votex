@@ -36,7 +36,7 @@ pub enum Commands {
         #[arg(short, long)]
         output: String,
 
-        /// TTS 引擎 (kokoro / indextts2 / qwen3 / cosyvoice3)
+        /// TTS 引擎 (kokoro / indextts2 / indextts25 / qwen3 / cosyvoice3)
         #[arg(long, default_value = "kokoro")]
         engine: String,
 
@@ -128,7 +128,7 @@ pub enum Commands {
         #[arg(short, long)]
         output: String,
 
-        /// TTS 引擎 (kokoro / indextts2 / qwen3 / cosyvoice3)
+        /// TTS 引擎 (kokoro / indextts2 / indextts25 / qwen3 / cosyvoice3)
         #[arg(long, default_value = "kokoro")]
         engine: String,
 
@@ -222,7 +222,7 @@ pub enum BatchAction {
         #[arg(short, long, default_value = "tts_batch_output")]
         output: String,
 
-        /// TTS 引擎 (kokoro / indextts2 / qwen3 / cosyvoice3)
+        /// TTS 引擎 (kokoro / indextts2 / indextts25 / qwen3 / cosyvoice3)
         #[arg(long, default_value = "kokoro")]
         engine: String,
 
@@ -413,8 +413,8 @@ pub enum OcrAction {
         #[arg(long)]
         no_cls: bool,
 
-        /// OCR 引擎 (paddleocr-v6-tiny / paddleocr-v4 / paddleocr-v5-mobile / paddleocr-v5-server / easyocr)
-        #[arg(long, default_value = "paddleocr-v6-tiny")]
+        /// OCR 引擎 (paddleocr-v6-medium / paddleocr-v6-small / paddleocr-v6-tiny / paddleocr-v4 / paddleocr-v5-mobile / paddleocr-v5-server / easyocr)
+        #[arg(long, default_value = "paddleocr-v6-medium")]
         engine: String,
     },
 
@@ -436,8 +436,8 @@ pub enum OcrAction {
         #[arg(long)]
         no_cls: bool,
 
-        /// OCR 引擎 (paddleocr-v6-tiny / paddleocr-v4 / paddleocr-v5-mobile / paddleocr-v5-server / easyocr)
-        #[arg(long, default_value = "paddleocr-v6-tiny")]
+        /// OCR 引擎 (paddleocr-v6-medium / paddleocr-v6-small / paddleocr-v6-tiny / paddleocr-v4 / paddleocr-v5-mobile / paddleocr-v5-server / easyocr)
+        #[arg(long, default_value = "paddleocr-v6-medium")]
         engine: String,
 
         /// 最大并发数

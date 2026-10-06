@@ -180,6 +180,7 @@ impl DashboardPage {
 
 struct ModelOverview {
     name: String,
+    /// 模型类型（Tts / Asr / Ocr / Translation），供分组展示与后续筛选
     #[allow(dead_code)]
     kind: String,
     status: String,

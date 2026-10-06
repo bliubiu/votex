@@ -5,6 +5,7 @@ use votex_domain::model::entity::Model;
 use votex_domain::model::value_object::{ModelId, ModelKind, EngineKind};
 use votex_domain::tts::provider::TtsProvider;
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test kokoro_provider_test --features slow-models")]
 #[test]
 fn test_kokoro_provider_load_solo() {
     let model = Model::new(
@@ -14,7 +15,7 @@ fn test_kokoro_provider_load_solo() {
         EngineKind::Kokoro,
     );
 
-    let mut provider = KokoroProvider::new();
+    let provider = KokoroProvider::new();
     let t0 = Instant::now();
 
     eprintln!("\n========== KokoroProvider ?????????????????? ==========");
@@ -31,6 +32,7 @@ fn test_kokoro_provider_load_solo() {
     }
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test kokoro_provider_test --features slow-models")]
 #[test]
 fn test_raw_session_load_after_provider() {
     // ?????????????????????KokoroProvider ?????????????????? raw Session ??????

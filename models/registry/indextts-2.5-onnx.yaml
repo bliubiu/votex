@@ -1,0 +1,124 @@
+id: indextts25
+name: IndexTTS-2.5 (ONNX)
+kind: Tts
+engine: IndexTTS25
+# 社区 fp32 ONNX 导出：https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx
+# 对官方 PyTorch CPU 参考实现 bit-exact（每段余弦=1.0，greedy token 逐个复现）。
+# int8 不可行（动态 QInt8 翻转 GPT greedy argmax），必须保持 fp32。
+# 支持语种：zh/en/ja/yue（yue=粤语，经 100 语言注册验证）。
+# 注意：GPT 权重存两份（gpt_prefill/gpt_step 各带 .onnx.data），磁盘约 11.7G。
+files:
+  - name: campplus.onnx
+    sha256: e238a367b9e7462fcbb97a395f8127f34c2a11288fc29490dfdf9d5d35365a49
+    size: 28134080
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/campplus.onnx
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/campplus.onnx
+  - name: emo_vec.onnx
+    sha256: 38e381b724dce6dd72e153e5d966900c5eab7cd09111cb58776962ec6cfa57c5
+    size: 652707069
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/emo_vec.onnx
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/emo_vec.onnx
+  - name: length_regulator.onnx
+    sha256: 33bfab767dc0b552ba92fde67bd4d8128a17dd0eeebd95a1b6523a38bc5e8791
+    size: 15767541
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/length_regulator.onnx
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/length_regulator.onnx
+  - name: semantic_codec_decode.onnx
+    sha256: 036cb36fa969058310e17a260bfa6a3b4658d0bc52269b84b4add1ec9c925800
+    size: 101328678
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/semantic_codec_decode.onnx
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/semantic_codec_decode.onnx
+  - name: bigvgan.onnx
+    sha256: 3c593f0413783d8d64d0c72628f5aa2e559b035af434a074224b64bedba61ce6
+    size: 450675212
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/bigvgan.onnx
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/bigvgan.onnx
+  - name: semantic_model/semantic_model.onnx
+    sha256: 54250e80444f45dbac24849cde17ae80cb3a8fa80057011dc532397024152870
+    size: 255673
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/semantic_model/semantic_model.onnx
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/semantic_model/semantic_model.onnx
+  - name: cfm_estimator/cfm_estimator.onnx
+    sha256: 28a278e62a76b14d27decc065651f31f07e1b89cb32f791f47bcad871b2bfbc1
+    size: 380364465
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/cfm_estimator/cfm_estimator.onnx
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/cfm_estimator/cfm_estimator.onnx
+  - name: semantic_model/semantic_model.onnx.data
+    sha256: 17df1d6671e17d53ea6a20e5f3857e958d2cc1808f07dcf25b8bb6c04fc73f70
+    size: 1644927232
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/semantic_model/semantic_model.onnx.data
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/semantic_model/semantic_model.onnx.data
+  - name: gpt_prefill/gpt_prefill.onnx
+    sha256: 6ba397dca8db27625269f3f83fecabbd6c5ded4401abb8331d2b8a688915ca7e
+    size: 416622
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/gpt_prefill/gpt_prefill.onnx
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/gpt_prefill/gpt_prefill.onnx
+  - name: gpt_prefill/gpt_prefill.onnx.data
+    sha256: b19994456b33194c8f42431acb879e0789efa33282dbe10812445f2f167cab18
+    size: 4488974352
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/gpt_prefill/gpt_prefill.onnx.data
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/gpt_prefill/gpt_prefill.onnx.data
+  - name: gpt_step/gpt_step.onnx
+    sha256: 006c895a16fa8d2d69add9b98c319270046a1ad2c130e12c71be6996fee8918d
+    size: 417827
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/gpt_step/gpt_step.onnx
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/gpt_step/gpt_step.onnx
+  - name: gpt_step/gpt_step.onnx.data
+    sha256: 1da1b096294b5820f618736a9ff15e69173345f470b0184591c1a6f7d08c0961
+    size: 3964604432
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/gpt_step/gpt_step.onnx.data
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/gpt_step/gpt_step.onnx.data
+  # 非 LFS 文件（git blob sha1 ≠ sha256），sha256 待回填
+  - name: multilingual_zh_ja_yue_char_del.tiktoken
+    sha256: ~
+    size: 907395
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/multilingual_zh_ja_yue_char_del.tiktoken
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/multilingual_zh_ja_yue_char_del.tiktoken
+  - name: spk_proj.npz
+    sha256: 9fe0a868da699d7eef33bd461b4fbaade8abd6c596d4abf9b8cf77fbf11ca932
+    size: 988666
+    required: true
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/spk_proj.npz
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/spk_proj.npz
+  # w2v-bert-2.0 特征提取配置（仅 json，权重不单独下载——语义模型 .data 内含）
+  - name: hf_cache/w2v-bert-2.0/config.json
+    sha256: ~
+    size: 1874
+    required: false
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/hf_cache/w2v-bert-2.0/config.json
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/hf_cache/w2v-bert-2.0/config.json
+  - name: hf_cache/w2v-bert-2.0/preprocessor_config.json
+    sha256: ~
+    size: 275
+    required: false
+    sources:
+      huggingface: https://huggingface.co/yunfengwang/IndexTTS-2.5-onnx/resolve/main/hf_cache/w2v-bert-2.0/preprocessor_config.json
+      hf-mirror: https://hf-mirror.com/yunfengwang/IndexTTS-2.5-onnx/resolve/main/hf_cache/w2v-bert-2.0/preprocessor_config.json

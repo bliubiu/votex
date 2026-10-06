@@ -22,8 +22,12 @@ impl ModelFileLocator {
     /// 查找顺序：
     /// 1. `models/<kind_dir>/<model_id>/` （如 models/asr/whisper-base/）
     /// 2. `models/<kind_dir>/<engine_name>/` （如 models/asr/sensevoice/）
-    /// 3. `models/<model.name>/`
-    /// 4. `model.name` 作为绝对路径
+    /// 3. **版本变体目录**：`models/<kind_dir>/<前缀>-<版本>/`（如请求 `qwen3-tts`
+    ///    而本地只有 `qwen3-tts-0.6b` / `qwen3-tts-1.7b` 时命中）
+    /// 4. `models/<model.name>/`
+    /// 5. `model.name` 作为绝对路径
+    ///
+    /// 模型根目录由 `WorkspacePaths` 统一解析，不依赖进程工作目录。
     ///
     /// # 参数
     /// - `model`: Model 实体
@@ -35,39 +39,46 @@ impl ModelFileLocator {
         let engine_name = model.engine.as_str();
         let model_id = model.id.as_str();
 
-        // 检测工作目录：如果在 crates/votex-infra 下，回退到 workspace root
-        let base = {
-            let mut dir = std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."));
-            if dir.ends_with("crates/votex-infra") || dir.ends_with("crates\\votex-infra") {
-                dir.pop();
-                dir.pop();
-            }
-            dir
-        };
+        // 模型根目录统一解析：环境变量 → application.yml → 可执行文件目录 → cwd 向上回溯
+        let models_root = crate::shared::workspace_paths::WorkspacePaths::models_dir();
+        let category = models_root.join(kind_dir);
 
         // 1. 尝试按 model ID 查找：models/<kind_dir>/<model_id>/
-        let id_path = base.join("models").join(kind_dir).join(model_id);
+        let id_path = category.join(model_id);
         if id_path.exists() && id_path.is_dir() {
             tracing::debug!("找到模型目录（ID 路径）: {:?}", id_path);
             return Ok(id_path);
         }
 
         // 2. 尝试按 engine 名查找：models/<kind_dir>/<engine_name>/
-        let engine_path = base.join("models").join(kind_dir).join(engine_name);
+        let engine_path = category.join(engine_name);
         if engine_path.exists() && engine_path.is_dir() {
             tracing::debug!("找到模型目录（engine 路径）: {:?}", engine_path);
             return Ok(engine_path);
         }
 
-        // 3. 尝试 model.name 路径：models/<model.name>/
-        let name_path = base.join("models").join(&model.name);
+        // 3. 版本变体回退：清单按版本分目录存放（qwen3-tts-0.6b / qwen3-tts-1.7b），
+        //    而调用方常用无版本后缀的泛化名（qwen3-tts）。此时扫描同分类下
+        //    以该名称为前缀的兄弟目录，避免要求调用方硬编码具体版本号。
+        for prefix in [model_id, engine_name] {
+            if let Some(dir) = Self::find_versioned_dir(&category, prefix) {
+                tracing::info!(
+                    "未找到精确目录 {}，回退到已下载的版本变体: {:?}",
+                    prefix,
+                    dir
+                );
+                return Ok(dir);
+            }
+        }
+
+        // 4. 尝试 model.name 路径：models/<model.name>/
+        let name_path = models_root.join(&model.name);
         if name_path.exists() && name_path.is_dir() {
             tracing::debug!("找到模型目录（name 路径）: {:?}", name_path);
             return Ok(name_path);
         }
 
-        // 4. 尝试 model.name 作为绝对路径
+        // 5. 尝试 model.name 作为绝对路径
         let abs_path = Path::new(&model.name);
         if abs_path.exists() && abs_path.is_dir() {
             tracing::debug!("找到模型目录（绝对路径）: {:?}", abs_path);
@@ -80,6 +91,33 @@ impl ModelFileLocator {
             kind_dir,
             engine_name
         )
+    }
+
+    /// 在分类目录下查找 `<前缀>-<后缀>` 形式的版本变体目录
+    ///
+    /// 排序后取第一个，保证结果稳定可复现；字符串排序天然让
+    /// `qwen3-tts-0.6b` 优先于 `qwen3-tts-1.7b`（小模型占用更少）。
+    fn find_versioned_dir(category: &Path, prefix: &str) -> Option<PathBuf> {
+        // 前缀本身已不存在，无需再找变体
+        if category.join(prefix).is_dir() {
+            return None;
+        }
+        let needle = format!("{}-", prefix);
+        let mut candidates: Vec<PathBuf> = std::fs::read_dir(category)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with(&needle) {
+                    Some(e.path())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        candidates.sort();
+        candidates.into_iter().next()
     }
 
     /// 在模型目录中查找 ONNX 文件
@@ -223,6 +261,8 @@ impl ModelFileLocator {
             ModelKind::Asr => "asr",
             ModelKind::Ocr => "ocr",
             ModelKind::Translation => "translation",
+            // 运行时依赖统一放 models/runtime/，与 WorkspacePaths::runtime_dir() 对应
+            ModelKind::Runtime => "runtime",
         }
     }
 }
@@ -245,8 +285,7 @@ mod tests {
         fs::create_dir_all(&model_dir).unwrap();
 
         // 临时改变工作目录
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = crate::shared::workspace_paths::tests_support::EnvGuard::set_workspace(dir.path());
 
         let model = create_test_model(
             "sensevoice",
@@ -256,7 +295,7 @@ mod tests {
         );
         let result = ModelFileLocator::locate_model_dir(&model);
 
-        std::env::set_current_dir(original_dir).unwrap();
+        drop(_guard);
 
         assert!(result.is_ok());
         assert!(result.unwrap().ends_with("models/asr/sensevoice"));
@@ -268,8 +307,7 @@ mod tests {
         let model_dir = dir.path().join("models").join("custom-model");
         fs::create_dir_all(&model_dir).unwrap();
 
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        let _guard = crate::shared::workspace_paths::tests_support::EnvGuard::set_workspace(dir.path());
 
         let model = create_test_model(
             "custom",
@@ -279,29 +317,78 @@ mod tests {
         );
         let result = ModelFileLocator::locate_model_dir(&model);
 
-        std::env::set_current_dir(original_dir).unwrap();
+        drop(_guard);
 
         assert!(result.is_ok());
         assert!(result.unwrap().ends_with("models/custom-model"));
     }
 
     #[test]
+    fn locate_model_dir_版本变体回退() {
+        // 复现 qwen3-tts 场景：清单按版本分目录，调用方用无后缀泛化名
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("models").join("tts").join("qwen3-tts-1.7b")).unwrap();
+        fs::create_dir_all(dir.path().join("models").join("tts").join("qwen3-tts-0.6b")).unwrap();
+
+        let _guard = crate::shared::workspace_paths::tests_support::EnvGuard::set_workspace(dir.path());
+
+        let model = create_test_model("qwen3-tts", "Qwen3-TTS", ModelKind::Tts, EngineKind::Qwen3Tts);
+        let result = ModelFileLocator::locate_model_dir(&model);
+
+        drop(_guard);
+
+        let found = result.expect("应回退到已下载的版本变体目录");
+        // 排序取第一个 → 0.6b 小模型优先，行为确定
+        assert!(
+            found.ends_with("qwen3-tts-0.6b"),
+            "应选中排序最前的变体，实际: {:?}",
+            found
+        );
+    }
+
+    #[test]
+    fn locate_model_dir_精确目录优先于变体() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("models").join("tts").join("qwen3-tts-0.6b")).unwrap();
+        fs::create_dir_all(dir.path().join("models").join("tts").join("qwen3-tts")).unwrap();
+
+        let _guard = crate::shared::workspace_paths::tests_support::EnvGuard::set_workspace(dir.path());
+
+        let model = create_test_model("qwen3-tts", "Qwen3-TTS", ModelKind::Tts, EngineKind::Qwen3Tts);
+        let result = ModelFileLocator::locate_model_dir(&model);
+
+        drop(_guard);
+
+        let found = result.expect("应命中精确目录");
+        assert!(found.ends_with("qwen3-tts"), "实际: {:?}", found);
+        assert!(!found.ends_with("qwen3-tts-0.6b"));
+    }
+
+    #[test]
     fn locate_model_dir_不存在应报错() {
         let dir = tempdir().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir.path()).unwrap();
+        // 建空的 models 分类目录：确保回溯找不到任何真实模型
+        fs::create_dir_all(dir.path().join("models").join("asr")).unwrap();
+        fs::create_dir_all(dir.path().join("models").join("tts")).unwrap();
+        let _guard = crate::shared::workspace_paths::tests_support::EnvGuard::set_workspace(dir.path());
 
+        // 引擎名用不存在的值，避免命中真实工作区里的同名模型
+        // （如 EngineKind::SenseVoice 对应 models/asr/sensevoice）
         let model = create_test_model(
-            "nonexistent",
-            "nonexistent",
+            "zzz-not-installed-engine",
+            "zzz-not-installed-engine",
             ModelKind::Asr,
             EngineKind::SenseVoice,
         );
         let result = ModelFileLocator::locate_model_dir(&model);
 
-        std::env::set_current_dir(original_dir).unwrap();
+        drop(_guard);
 
-        assert!(result.is_err());
+        let err = result.expect_err("不存在的模型目录应报错");
+        // 错误信息必须给出可操作提示（模型 id + 目标路径）
+        let msg = err.to_string();
+        assert!(msg.contains("zzz-not-installed-engine"), "错误信息缺模型 id: {msg}");
+        assert!(msg.contains("models"), "错误信息缺目标路径: {msg}");
     }
 
     #[test]

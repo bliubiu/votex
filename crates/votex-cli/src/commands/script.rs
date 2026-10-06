@@ -1,7 +1,16 @@
-use clap::Args;
+//! 文案生成子命令
+//!
+//! 只做参数映射与输出格式化，
+//! 业务逻辑（提示词拼装、API 调用、响应解析）全部在
+//! `votex_app::use_case::script_generate`。
+//!
+//! 旧实现在本文件里复制了一份完整的提示词与 HTTP 调用，
+//! 与用例实现漂移（超时 60s vs 120s、缺少标题解析），已统一到用例。
+
 use anyhow::{Context, Result};
+use clap::Args;
 use std::path::Path;
-use std::time::Duration;
+use votex_app::use_case::script_generate::{ScriptGenerateRequest, ScriptGenerateUseCase};
 
 /// 生成短视频文案
 #[derive(Args, Debug)]
@@ -33,72 +42,28 @@ pub struct ScriptCommand {
 
 /// 处理文案生成命令
 pub fn handle(cmd: &ScriptCommand) -> Result<()> {
-    println!("📝 正在生成文案...");
+    println!("正在生成文案...");
     println!("   主题: {}", cmd.topic);
     println!("   风格: {}", cmd.style);
     println!("   引擎: {}", cmd.engine);
 
-    let api_key = std::env::var("DEEPSEEK_API_KEY")
-        .context("请设置 DEEPSEEK_API_KEY 环境变量")?;
-
-    let client = votex_infra::api::base::BaseApiClient::new(
-        votex_infra::api::base::ApiConfig {
-            api_key: Some(api_key),
-            endpoint: Some("https://api.deepseek.com".to_string()),
-            timeout: Duration::from_secs(60),
-            ..Default::default()
-        }
-    );
-
-    let system_prompt = match cmd.style.as_str() {
-        "故事" => "你是一个故事创作专家。请根据给定的主题生成一段吸引人的故事短视频文案。开头制造悬念，中间展开情节，结尾有感悟。语言生动形象，适合朗读。",
-        "营销" => "你是一个营销文案专家。请根据给定的产品/主题生成一段有说服力的营销短视频文案。开头直击痛点，中间展示价值，结尾引导行动。语言简洁有力。",
-        "教程" => "你是一个教学视频文案专家。请根据给定的主题生成一段步骤清晰的教学短视频文案。开头说明目标，分步骤讲解，结尾总结要点。",
-        _ => "你是一个科普短视频文案专家。请根据给定的主题生成一段约60秒的科普短视频文案。开头用问题吸引注意力，中间用通俗语言解释，结尾总结核心观点。语言口语化，适合朗读。",
-    };
-
-    let mut user_prompt = format!("请为主题「{}」生成一段{}风格的短视频文案。", cmd.topic, cmd.style);
-    if let Some(d) = cmd.duration {
-        user_prompt.push_str(&format!("\n目标时长：约{}秒。", d));
-    }
-    if let Some(ref extra) = cmd.extra {
-        user_prompt.push_str(&format!("\n额外要求：{}", extra));
-    }
-    user_prompt.push_str("\n\n直接输出文案内容，不要包含额外的解释。第一行作为标题。");
-
-    let body = serde_json::json!({
-        "model": cmd.engine,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 2048,
-    });
-
-    let headers = vec![
-        ("Authorization".to_string(), format!("Bearer {}", std::env::var("DEEPSEEK_API_KEY").unwrap_or_default())),
-        ("Content-Type".to_string(), "application/json".to_string()),
-    ];
-
-    let resp = client.post_json(
-        "https://api.deepseek.com/v1/chat/completions",
-        Some(&headers),
-        body,
-    ).context("DeepSeek API 调用失败")?;
-
-    let result: serde_json::Value = resp.json().context("解析响应失败")?;
-    let text = result["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let response = ScriptGenerateUseCase.execute(ScriptGenerateRequest {
+        topic: cmd.topic.clone(),
+        style: cmd.style.clone(),
+        duration_seconds: cmd.duration,
+        engine: cmd.engine.clone(),
+        extra_instructions: cmd.extra.clone(),
+    })?;
 
     if let Some(ref out_path) = cmd.output {
-        std::fs::write(Path::new(out_path), &text)
+        std::fs::write(Path::new(out_path), &response.content)
             .context("写入输出文件失败")?;
-        println!("\n✅ 文案已保存到: {}", out_path);
+        println!("\n文案已保存到: {}", out_path);
     } else {
-        println!("\n✅ 生成结果:\n\n{}", text);
+        if !response.title.is_empty() {
+            println!("\n标题: {}", response.title);
+        }
+        println!("\n生成结果:\n\n{}", response.content);
     }
 
     Ok(())

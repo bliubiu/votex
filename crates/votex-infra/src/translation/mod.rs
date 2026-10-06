@@ -120,7 +120,7 @@ pub fn create_translation_provider_with_dir(
         "ctranslate2" => Ok(Box::new(ctranslate2::CTranslate2Provider::new())),
 
         "opus-mt" => {
-            let mut provider = opus_mt::OpusMtProvider::new();
+            let provider = opus_mt::OpusMtProvider::new();
             if let Some(dir) =
                 resolve_model_dir(models_dir, &["opus-mt-zh-en"], "encoder_model.onnx")
             {
@@ -160,7 +160,7 @@ fn create_offline_provider(
 ) -> Result<Box<dyn TranslationProvider>, String> {
     macro_rules! build {
         ($provider:expr) => {{
-            let mut provider = $provider;
+            let provider = $provider;
             if let Some(dir) = model_dir {
                 provider
                     .load_from_dir(dir)

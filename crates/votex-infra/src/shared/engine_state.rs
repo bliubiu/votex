@@ -22,7 +22,7 @@ use std::sync::Mutex;
 /// }
 ///
 /// impl MyProvider {
-///     fn load(&mut self, model_path: &Path) -> Result<()> {
+///     fn load(&self, model_path: &Path) -> Result<()> {
 ///         let session = OrtSessionFactory::create(model_path)?;
 ///         self.state.load(session);
 ///         Ok(())
@@ -56,17 +56,17 @@ impl<T> EngineState<T> {
     /// # 参数
     /// - `value`: 引擎实例
     pub fn load(&self, value: T) {
-        *self.inner.lock().unwrap() = Some(value);
+        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
     }
 
     /// 卸载引擎（释放资源）
     pub fn unload(&self) {
-        *self.inner.lock().unwrap() = None;
+        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// 检查引擎是否已加载
     pub fn is_loaded(&self) -> bool {
-        self.inner.lock().unwrap().is_some()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 
     /// 安全访问引擎（只读）
@@ -80,7 +80,7 @@ impl<T> EngineState<T> {
     where
         F: FnOnce(&T) -> R,
     {
-        let guard = self.inner.lock().unwrap();
+        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let engine = guard.as_ref().ok_or(EngineNotLoaded)?;
         Ok(f(engine))
     }
@@ -96,14 +96,19 @@ impl<T> EngineState<T> {
     where
         F: FnOnce(&mut T) -> R,
     {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let engine = guard.as_mut().ok_or(EngineNotLoaded)?;
         Ok(f(engine))
     }
 
     /// 获取引擎引用（如果已加载）
+    ///
+    /// 返回守卫而非裸引用，是为了让调用方**无法**在守卫存活期间
+    /// 触发对同一引擎的 `load` / `unload`（那会 panic）。
+    /// 需要访问引擎内容时优先用 [`with`](Self::with) / [`with_mut`](Self::with_mut)，
+    /// 在闭包内完成全部工作。
     pub fn get(&self) -> Option<std::sync::MutexGuard<'_, Option<T>>> {
-        Some(self.inner.lock().unwrap())
+        Some(self.inner.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 

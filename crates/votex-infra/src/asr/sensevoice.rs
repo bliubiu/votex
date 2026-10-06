@@ -38,7 +38,7 @@ impl SenseVoiceProvider {
     }
 
     /// 从模型目录加载 ONNX 模型
-    fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), AsrError> {
+    fn load_from_dir(&self, model_dir: &Path) -> Result<(), AsrError> {
         // 查找 ONNX 模型文件（优先 sherpa-onnx 导出的 int8 版本，其次 FunASR 导出的量化版本）
         let candidates = [
             model_dir.join("model.int8.onnx"),    // sherpa-onnx 导出
@@ -99,7 +99,7 @@ impl SenseVoiceProvider {
         let recognizer = OfflineRecognizer::create(&config)
             .ok_or_else(|| AsrError::LoadFailed("创建 SenseVoice 识别器失败".to_string()))?;
 
-        *self.recognizer.lock().unwrap() = Some(recognizer);
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = Some(recognizer);
 
         tracing::info!("SenseVoice ONNX 引擎加载完成 (目录: {:?})", model_dir);
         Ok(())
@@ -149,13 +149,13 @@ impl AsrProvider for SenseVoiceProvider {
         EngineKind::SenseVoice
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), AsrError> {
+    fn load(&self, model: &Model) -> Result<(), AsrError> {
         let model_dir = Self::find_model_dir(model)?;
         self.load_from_dir(&model_dir)
     }
 
-    fn unload(&mut self) -> Result<(), AsrError> {
-        *self.recognizer.lock().unwrap() = None;
+    fn unload(&self) -> Result<(), AsrError> {
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = None;
         tracing::info!("SenseVoice 引擎已释放");
         Ok(())
     }
@@ -165,7 +165,7 @@ impl AsrProvider for SenseVoiceProvider {
         audio: &AudioData,
         _params: &AsrParams,
     ) -> Result<RecognizeOutput, AsrError> {
-        let guard = self.recognizer.lock().unwrap();
+        let guard = self.recognizer.lock().unwrap_or_else(|e| e.into_inner());
         let recognizer = guard.as_ref().ok_or(AsrError::EngineNotLoaded)?;
 
         // 转换为 16kHz 单声道 f32 PCM
@@ -210,6 +210,6 @@ impl AsrProvider for SenseVoiceProvider {
     }
 
     fn is_loaded(&self) -> bool {
-        self.recognizer.lock().unwrap().is_some()
+        self.recognizer.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 }

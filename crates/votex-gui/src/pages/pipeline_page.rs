@@ -42,7 +42,7 @@ impl PipelinePage {
                     .selected_text(&state.pipeline.engine)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut state.pipeline.engine, "kokoro".to_string(), "Kokoro-82M");
-                        ui.selectable_value(&mut state.pipeline.engine, "indextts2".to_string(), "IndexTTS2");
+                        ui.selectable_value(&mut state.pipeline.engine, "indextts25".to_string(), "IndexTTS-2.5（粤语）");
                         ui.selectable_value(&mut state.pipeline.engine, "qwen3".to_string(), "Qwen3-TTS");
                         ui.selectable_value(&mut state.pipeline.engine, "cosyvoice3".to_string(), "CosyVoice3");
                     });
@@ -156,8 +156,12 @@ impl PipelinePage {
             ui.horizontal(|ui| {
                 if state.pipeline.is_running {
                     if PageLayout::danger_button(ui, "停止", true).clicked() {
-                        state.pipeline.is_running = false;
-                        state.pipeline.progress_text = "已停止".to_string();
+                        // 置位取消令牌，后台任务在阶段/片段边界中断，
+                        // 终态由后台 Error 事件统一复位（与 TTS 页一致）
+                        if let Some(ref token) = state.pipeline.cancel_token {
+                            token.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        state.pipeline.progress_text = "正在停止...".to_string();
                     }
                 } else {
                     if PageLayout::primary_button(ui, "▶ 执行流水线", !state.pipeline.steps.is_empty()).clicked() {
@@ -172,7 +176,10 @@ impl PipelinePage {
                         } else {
                             "audiobook".to_string()
                         };
-                        crate::task_runner::spawn_pipeline(tx, kind, state.pipeline.input_path.clone(), state.pipeline.output_dir.clone(), state.pipeline.engine.clone(), state.pipeline.voice.clone(), state.pipeline.speed, state.pipeline_repo.clone());
+                        // 取消令牌由页面持有并复用，停止按钮才能拿到同一个令牌
+                        let token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        state.pipeline.cancel_token = Some(std::sync::Arc::clone(&token));
+                        crate::task_runner::spawn_pipeline(tx, kind, state.pipeline.input_path.clone(), state.pipeline.output_dir.clone(), state.pipeline.engine.clone(), state.pipeline.voice.clone(), state.pipeline.speed, state.pipeline_repo.clone(), Some(token));
                     }
                 }
             });

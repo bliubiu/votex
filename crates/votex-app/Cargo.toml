@@ -15,6 +15,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tracing = { workspace = true }
+# 门面层 platform::persistence 需要暴露 SharedConnection 类型别名。
+# 表现层（cli / gui）通过 trait object 持有仓储，不再需要此依赖。
+rusqlite = { version = "0.34", features = ["bundled"] }
 
 [dev-dependencies]
 encoding_rs = { workspace = true }

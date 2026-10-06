@@ -1,7 +1,7 @@
 //! SentencePiece BPE 分词器
 //!
 //! 基于 `bpe_tokenizer.rs` 中的通用 SentencePiece BPE 实现，
-//! 适配 `TextTokenizer` trait，用于 IndexTTS2、翻译模型等。
+//! 适配 `TextTokenizer` trait，用于翻译模型等。
 
 use std::path::Path;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use crate::bpe_tokenizer::SentencePieceBpe;
 /// # 示例
 ///
 /// ```ignore
-/// let tokenizer = SentencePieceBpeTokenizer::load("models/indextts2/bpe.model")?;
+/// let tokenizer = SentencePieceBpeTokenizer::load("models/translation/m2m-100/sentencepiece.bpe.model")?;
 /// let ids = tokenizer.encode("你好世界")?;
 /// ```
 pub struct SentencePieceBpeTokenizer {

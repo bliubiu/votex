@@ -1,0 +1,15 @@
+id: wenet
+name: WeNet Conformer
+kind: Asr
+engine: WeNet
+files:
+  - name: model.onnx
+    sha256: 879e57e3fa65f2f80db666538411575cedce9af7492d8f50f93ea7cacddce6ea
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-zh-wenet-wenetspeech/resolve/main/model.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-zh-wenet-wenetspeech/resolve/main/model.onnx
+  - name: tokens.txt
+    sha256: b549f532e45b2c1936f0f38a7444cbd8535efd499a78a758e4698950947f0d5b
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-zh-wenet-wenetspeech/resolve/main/tokens.txt
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-zh-wenet-wenetspeech/resolve/main/tokens.txt

@@ -80,18 +80,22 @@ impl TranslationPipeline {
         options: &TranslationOptions,
     ) -> Result<TranslationOutcome, TranslationError> {
         let mut sink = NoopSink;
-        self.run(text, options, &mut sink)
+        self.run(text, options, &mut sink, None)
     }
 
     /// 翻译文本（带进度回调，进度以片段为单位）
+    ///
+    /// `cancel` 置 true 后在下一个片段边界返回 `TranslationError::Cancelled`
+    /// （已完成的片段不保留——翻译无逐段落盘语义）。
     pub fn translate_with_progress(
         &self,
         text: &str,
         options: &TranslationOptions,
         on_progress: &mut dyn FnMut(usize, usize),
+        cancel: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<TranslationOutcome, TranslationError> {
         let mut sink = ProgressSink { on_progress };
-        self.run(text, options, &mut sink)
+        self.run(text, options, &mut sink, cancel)
     }
 
     /// 流式翻译
@@ -105,7 +109,7 @@ impl TranslationPipeline {
         on_chunk: &mut dyn FnMut(&str),
     ) -> Result<TranslationOutcome, TranslationError> {
         let mut sink = StreamSink { on_chunk };
-        self.run(text, options, &mut sink)
+        self.run(text, options, &mut sink, None)
     }
 
     /// 批量翻译
@@ -142,6 +146,7 @@ impl TranslationPipeline {
         text: &str,
         options: &TranslationOptions,
         sink: &mut dyn Sink,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<TranslationOutcome, TranslationError> {
         let source = text.trim();
         if source.is_empty() {
@@ -178,6 +183,13 @@ impl TranslationPipeline {
         let mut cached_segments = 0usize;
 
         for (index, segment) in segments.iter().enumerate() {
+            // 段边界取消检查：翻译的单段耗时主要在 provider 调用，
+            // 段粒度即取消粒度
+            if let Some(flag) = cancel {
+                if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err(TranslationError::Cancelled);
+                }
+            }
             let translated = self.translate_one(
                 segment,
                 direction,
@@ -545,7 +557,7 @@ mod tests {
         let out = p
             .translate_with_progress(&long, &options, &mut |done, total| {
                 seen.push((done, total))
-            })
+            }, None)
             .unwrap();
 
         assert_eq!(seen.len(), out.segments);

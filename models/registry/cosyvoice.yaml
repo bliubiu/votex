@@ -1,0 +1,88 @@
+id: cosyvoice
+name: CosyVoice 3.0
+kind: Tts
+engine: CosyVoice3
+# 社区 ONNX 转换版本：https://huggingface.co/ayousanz/cosy-voice3-onnx
+# 基于 FunAudioLLM/Fun-CosyVoice3-0.5B-2512 导出
+files:
+  - name: campplus.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/campplus.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/campplus.onnx
+  - name: speech_tokenizer_v3.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/speech_tokenizer_v3.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/speech_tokenizer_v3.onnx
+  - name: text_embedding_fp32.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/text_embedding_fp32.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/text_embedding_fp32.onnx
+  # 注意：LLM 主干文件名带 `_fixed` 后缀，与运行时 cosyvoice.rs:1427-1436 的期望一致
+  - name: llm_backbone_initial_fp16_fixed.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/llm_backbone_initial_fp16_fixed.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/llm_backbone_initial_fp16_fixed.onnx
+  - name: llm_backbone_decode_fp16_fixed.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/llm_backbone_decode_fp16_fixed.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/llm_backbone_decode_fp16_fixed.onnx
+  - name: llm_decoder_fp16_fixed.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/llm_decoder_fp16_fixed.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/llm_decoder_fp16_fixed.onnx
+  - name: llm_speech_embedding_fp16_fixed.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/llm_speech_embedding_fp16_fixed.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/llm_speech_embedding_fp16_fixed.onnx
+  - name: flow_token_embedding_fp16.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/flow_token_embedding_fp16.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/flow_token_embedding_fp16.onnx
+  - name: flow_pre_lookahead_fp16.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/flow_pre_lookahead_fp16.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/flow_pre_lookahead_fp16.onnx
+  - name: flow_speaker_projection_fp16.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/flow_speaker_projection_fp16.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/flow_speaker_projection_fp16.onnx
+  - name: flow.decoder.estimator.fp16.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/flow.decoder.estimator.fp16.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/flow.decoder.estimator.fp16.onnx
+  - name: hift_f0_predictor_fp32.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/hift_f0_predictor_fp32.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/hift_f0_predictor_fp32.onnx
+  - name: hift_source_generator_fp32.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/hift_source_generator_fp32.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/hift_source_generator_fp32.onnx
+  - name: hift_decoder_fp32.onnx
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/hift_decoder_fp32.onnx
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/hift_decoder_fp32.onnx
+  - name: vocab.json
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/vocab.json
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/vocab.json
+  - name: merges.txt
+    sha256: ~
+    sources:
+      huggingface: https://huggingface.co/ayousanz/cosy-voice3-onnx/resolve/main/merges.txt
+      hf-mirror: https://hf-mirror.com/ayousanz/cosy-voice3-onnx/resolve/main/merges.txt

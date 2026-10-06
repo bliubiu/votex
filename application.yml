@@ -10,7 +10,7 @@ models:
     timeout: 300
 tts:
   default_engine: kokoro
-  default_voice: zf_001
+  default_voice: af
   default_speed: 1.0
   default_pitch: 0
   default_volume: 80
@@ -30,20 +30,13 @@ asr:
   denoise_level: low
   default_output_format: srt
 translation:
-  # 默认翻译引擎：dict / opus-mt / nllb-200 / m2m-100 / hy-mt-1.5 / qwen-mt / llm
   default_engine: dict
-  # 默认翻译方向：zh-en / en-zh / auto / zh->ja
   default_direction: zh-en
-  # 翻译结果缓存（重复文本不再走模型推理）
   enable_cache: true
   cache_capacity: 2000
-  # 长文本分段：单段最大字符数，0 表示按引擎能力自动决定
   max_segment_chars: 0
-  # 术语表文件路径（JSON 数组：[{"src":"爱丽丝","dst":"Alice","info":"女主角"}]）
   glossary_path: null
-  # 目标中文书写系统：none / simplified / traditional
   target_script: none
-  # LLM 引擎携带的历史上下文轮数（保证术语与人称一致）
   context_turns: 3
 output:
   dir: output
@@ -70,20 +63,14 @@ inference:
   inter_threads: 0
   quantization: none
   kv_cache: true
-  # 执行提供器：cpu（稳定）/ directml（GPU）/ auto（优先 GPU，失败回退 CPU）
-  # 注意：DirectML 在部分显卡驱动上会导致进程崩溃（非可捕获错误），
-  # 若无 GPU 加速需求请保持 cpu；确认 GPU 可用时再改为 auto 或 directml。
   execution_provider: cpu
   memory_limit_mb: 2048
   enable_memory_pattern: false
   execution_mode: sequential
 pipeline:
-  progressive_quality: true# 资源治理：防止长文本/批量推理占满系统资源触发 OOM 或 hang
+  progressive_quality: true
 resource:
-  # 最大推理并发许可数（Green 状态；Yellow 自动收缩为 1，Red 暂停派发）
   max_inference_concurrency: 2
-  # 内存已用百分比阈值：达到 Yellow 收缩并发，达到 Red 暂停派发
-  memory_yellow_used_pct: 70
-  memory_red_used_pct: 85
-  # 是否强制执行资源限制（false 仅供调试，关闭后无并发与内存保护）
+  memory_yellow_used_pct: 70.0
+  memory_red_used_pct: 85.0
   enforce_limits: true

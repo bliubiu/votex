@@ -38,7 +38,7 @@
 - Rust 
 - clap（CLI 参数解析）
 - egui + eframe（GUI 框架）
-- TTS 引擎：Qwen3-TTS 、CosyVoice 3.0、 Kokoro‑82M-zh(ONNX) 、 IndexTTS2(ONNX) 
+- TTS 引擎：Qwen3-TTS 、CosyVoice 3.0、 Kokoro‑82M-zh(ONNX) 、 IndexTTS-2.5(ONNX，粤语原生) 
 - STT/ASR 引擎：SenseVoice、Qwen3-ASR、Paraformer、FireRedASR、WeNet (Conformer) 、FireRedASR v2、
 - OCR 引擎： PaddleOCR（PP-OCRv6 Medium 最新版本可用）
 - 翻译引擎： HY-MT1.5、NLLB-200、M2M-100、CTranslate2、Qwen-MT、OPUS-MT

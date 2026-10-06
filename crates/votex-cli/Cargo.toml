@@ -2,10 +2,12 @@
 name = "votex-cli"
 version.workspace = true
 edition.workspace = true
+
+# 分层约束：本 crate 是表现层，只允许依赖 votex-app / votex-domain。
+# 基础设施（ONNX Runtime、SQLite、模型下载）一律经 votex-app::platform 门面访问。
 [dependencies]
 votex-domain = { workspace = true }
 votex-app = { workspace = true }
-votex-infra = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
@@ -13,7 +15,6 @@ serde_json = { workspace = true }
 serde_yml = { workspace = true }
 tracing = { workspace = true }
 ctrlc = { workspace = true }
-rusqlite = { version = "0.34", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"

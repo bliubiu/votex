@@ -155,10 +155,18 @@ pub struct M2m100Provider {
     encoder_state: EngineState<Session>,
     decoder_state: EngineState<Session>,
     decoder_with_past_state: EngineState<Session>,
-    tokenizer: Option<SentencePieceBpe>,
+    /// SentencePiece 分词器
+    ///
+    /// 走 `EngineState`：`TranslationProvider::load` 是 `&self`，
+    /// 裸 `Option` 无法在共享实例上写入。
+    tokenizer: EngineState<SentencePieceBpe>,
     max_length: usize,
     /// M2M-100 变体：418M 或 1.2B
-    variant: ModelVariant,
+    /// 模型变体（决定 SentencePiece 词表与特殊 token 处理）
+    ///
+    /// 走 `EngineState`：变体在 `load()` 中依据实际模型文件大小重新判定，
+    /// 裸字段无法在共享实例上写入。
+    variant: EngineState<ModelVariant>,
 }
 
 /// M2M-100 模型变体
@@ -174,9 +182,13 @@ impl M2m100Provider {
             encoder_state: EngineState::new(),
             decoder_state: EngineState::new(),
             decoder_with_past_state: EngineState::new(),
-            tokenizer: None,
+            tokenizer: EngineState::new(),
             max_length: 512,
-            variant: ModelVariant::M418M,
+            variant: {
+                let s = EngineState::new();
+                s.load(ModelVariant::M418M);
+                s
+            },
         }
     }
 
@@ -191,7 +203,7 @@ impl M2m100Provider {
     /// 按独立文件选择加载策略：
     /// 1. 优先尝试 `encoder_model.int8.onnx` / `decoder_model.int8.onnx`
     /// 2. 回退到 `encoder_model.onnx` / `decoder_model.onnx`
-    pub fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    pub fn load_from_dir(&self, model_dir: &Path) -> Result<(), TranslationError> {
         let tokenizer_path = model_dir.join("sentencepiece.bpe.model");
 
         // 独立选择每个文件：优先 int8 → fp32
@@ -209,12 +221,15 @@ impl M2m100Provider {
         let decoder_path = decoder_candidates.iter().find(|p| p.exists())
             .ok_or(TranslationError::ModelNotLoaded)?;
 
-        // 估算模型变体
-        if let Ok(meta) = std::fs::metadata(&encoder_path) {
-            if meta.len() > 1_000_000_000 {
-                self.variant = ModelVariant::M1_2B;
-            }
-        }
+        // 估算模型变体。
+        // 必须**无条件**赋值：原先只在「> 1GB 时置 M1_2B」，
+        // 若先加载过 1.2B 再加载 418M，变体会残留为 M1_2B，
+        // 导致按错误词表/特殊 token 处理解码，输出乱码。
+        let variant = match std::fs::metadata(&encoder_path) {
+            Ok(meta) if meta.len() > 1_000_000_000 => ModelVariant::M1_2B,
+            _ => ModelVariant::M418M,
+        };
+        self.variant.load(variant);
 
         // 加载 ONNX sessions
         let encoder_session = OrtSessionFactory::create_raw(&encoder_path)
@@ -261,14 +276,14 @@ impl M2m100Provider {
                 tracing::warn!("M2M-100: tokenizer.json 不存在，使用 SentencePiece 原始 ID");
             }
 
-            self.tokenizer = Some(sp);
+            self.tokenizer.load(sp);
         } else {
             return Err(TranslationError::ModelNotLoaded);
         }
 
         tracing::info!(
             "M2M-100 ({}) 翻译引擎加载完成: {:?}",
-            match self.variant {
+            match self.variant.with(|v| *v).unwrap_or(ModelVariant::M418M) {
                 ModelVariant::M418M => "418M",
                 ModelVariant::M1_2B => "1.2B",
             },
@@ -283,9 +298,11 @@ impl M2m100Provider {
         text: &str,
         direction: &TranslationDirection,
     ) -> Result<String, TranslationError> {
-        let tokenizer = self
-            .tokenizer
+        // 守卫必须活到整个翻译流程结束（编码 → 推理 → 解码都用到 tokenizer）。
+        let tokenizer_guard = self.tokenizer.get();
+        let tokenizer = tokenizer_guard
             .as_ref()
+            .and_then(|g| g.as_ref())
             .ok_or(TranslationError::ModelNotLoaded)?;
 
         // 确定源语言和目标语言
@@ -436,18 +453,18 @@ impl TranslationProvider for M2m100Provider {
         self.translate_internal(text, &direction)
     }
 
-    fn load(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    fn load(&self, model_dir: &Path) -> Result<(), TranslationError> {
         self.load_from_dir(model_dir)
     }
 
-    fn unload(&mut self) {
+    fn unload(&self) {
         self.encoder_state.unload();
         self.decoder_state.unload();
         self.decoder_with_past_state.unload();
     }
 
     fn is_loaded(&self) -> bool {
-        self.encoder_state.is_loaded() && self.decoder_state.is_loaded() && self.tokenizer.is_some()
+        self.encoder_state.is_loaded() && self.decoder_state.is_loaded() && self.tokenizer.is_loaded()
     }
 
     fn max_input_chars(&self) -> usize {

@@ -120,11 +120,14 @@ impl Timestamp {
         )
     }
 
-    /// LRC 时间格式：[mm:ss.xx]
+    /// LRC 时间格式：[mm:ss.xx]（超 1 小时折入分钟位，如 1h02m → [62:00.00]，
+    /// LRC 标准只有分钟位，直接丢弃小时位会让整条时间轴错位）
     pub fn to_lrc_format(&self) -> String {
         format!(
             "[{:02}:{:02}.{:02}]",
-            self.minutes, self.seconds, self.millis / 10
+            self.hours * 60 + self.minutes,
+            self.seconds,
+            self.millis / 10
         )
     }
 }

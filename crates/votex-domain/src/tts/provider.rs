@@ -11,10 +11,10 @@ pub trait TtsProvider: Send + Sync {
     fn engine_kind(&self) -> EngineKind;
 
     /// 加载模型到内存
-    fn load(&mut self, model: &Model) -> Result<(), TtsError>;
+    fn load(&self, model: &Model) -> Result<(), TtsError>;
 
     /// 释放模型资源
-    fn unload(&mut self) -> Result<(), TtsError>;
+    fn unload(&self) -> Result<(), TtsError>;
 
     /// 合成单段语音
     fn synthesize(

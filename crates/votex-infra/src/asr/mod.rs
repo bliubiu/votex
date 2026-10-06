@@ -1,3 +1,7 @@
+//! ASR 引擎适配器：SenseVoice / Whisper / FireRed / WeNet / Qwen3-ASR 等。
+//!
+//! 每个适配器负责自己的分词、特征提取与解码，差异较大，暂不抽象公共基类。
+
 pub mod whisper;
 pub mod sensevoice;
 pub mod paraformer;

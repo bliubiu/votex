@@ -225,6 +225,37 @@ impl FfmpegEncoder {
         Ok(())
     }
 
+    /// 将任意 ffmpeg 支持的音频文件解码为标准 WAV（PCM）
+    ///
+    /// ASR 只能直接读取 WAV，MP3/M4A/FLAC 等格式经此转码后再喂给识别引擎。
+    /// `-vn` 丢弃 m4b/mp4 等容器中的视频轨；不强制采样率/声道，
+    /// 由调用方的重采样路径统一处理。
+    pub fn decode_to_wav(&self, input_path: &Path, output_path: &Path) -> Result<()> {
+        if !input_path.exists() {
+            anyhow::bail!("输入音频文件不存在: {:?}", input_path);
+        }
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent).context("创建转码输出目录失败")?;
+        }
+
+        let mut cmd = Command::new(&self.ffmpeg_path);
+        cmd.arg("-y")
+            .arg("-i")
+            .arg(input_path)
+            .args(["-vn", "-map", "a:0?", "-f", "wav"])
+            .arg(output_path);
+        let output = cmd.output().context("执行 ffmpeg 命令失败")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!("ffmpeg 解码失败: {}", stderr);
+            anyhow::bail!("ffmpeg 解码 {:?} 失败: {}", input_path, stderr);
+        }
+
+        tracing::info!("音频解码完成: {:?} → {:?}", input_path, output_path);
+        Ok(())
+    }
+
     /// 将 WAV 编码为带章节元数据的 m4b 有声书
     ///
     /// `chapters`: (标题, 起始毫秒) 序列，按起始时间升序；

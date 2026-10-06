@@ -18,7 +18,6 @@
 use ndarray::{Array1, Array2, Array3, ArrayD, Axis, IxDyn};
 use ort::session::Session;
 use ort::value::Value;
-use rand::Rng;
 
 use votex_domain::error::TtsError;
 use votex_domain::model::entity::Model;
@@ -390,30 +389,14 @@ impl Embeddings {
 // 采样函数
 // ============================================================
 
+/// 按 top-k + 温度从 logits 中采样一个 token
+///
+/// 实现已上提到 `shared::sampling`，此处仅保留引擎特有的调用形状。
+/// 旧实现里 `partial_cmp().unwrap()` 遇 NaN 会 panic，
+/// 新实现在解码主循环中彻底消除该风险。
 fn sample_top_k(logits: &[f32], top_k: usize, temperature: f32) -> i64 {
-    let mut rng = rand::thread_rng();
-    let mut scores = logits.to_vec();
-    if (temperature - 1.0).abs() > f32::EPSILON {
-        for s in scores.iter_mut() { *s /= temperature; }
-    }
-    if top_k > 0 && top_k < scores.len() {
-        let mut sorted = scores.clone();
-        sorted.select_nth_unstable_by(scores.len() - top_k, |a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-        let threshold = sorted[scores.len() - top_k];
-        for s in scores.iter_mut() { if *s < threshold { *s = f32::NEG_INFINITY; } }
-    }
-    let max_v = scores.iter().cloned().max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)).unwrap_or(0.0);
-    for s in scores.iter_mut() { *s = (*s - max_v).exp(); }
-    let sum: f32 = scores.iter().sum();
-    if sum <= 0.0 || !sum.is_finite() { return 0; }
-    for s in scores.iter_mut() { *s /= sum; }
-    let r: f32 = rng.gen();
-    let mut cum = 0.0;
-    for (i, &p) in scores.iter().enumerate() {
-        cum += p;
-        if r < cum { return i as i64; }
-    }
-    (scores.len() - 1) as i64
+    let rand = rand::random::<f32>();
+    crate::shared::sampling::sample_token(logits, top_k, 0.0, temperature, rand) as i64
 }
 
 // ============================================================
@@ -597,15 +580,62 @@ fn map_ort_err(e: ort::Error) -> TtsError {
 // Qwen3TtsProvider
 // ============================================================
 
+/// Qwen3-TTS 模型变体
+///
+/// 打包「当前加载的是哪个变体」这一整体状态，避免 `is_small` 与
+/// `voices` 出现不同步的中间态。
+#[derive(Debug, Clone)]
+struct Qwen3TtsVariant {
+    /// true = 0.6B（elbruno，预设 speaker embedding，instruct 无效）
+    /// false = 1.7B（wavekat，VoiceDesign instruct）
+    is_small: bool,
+    /// 该变体可用的音色列表
+    voices: Vec<VoiceId>,
+}
+
+/// 1.7B 变体的默认音色列表
+///
+/// 既是未加载状态下的回退值，也是 `load()` 的分支产物，
+/// 单独提出来避免两处重复维护导致漂移。
+fn default_qwen3_voices() -> Vec<VoiceId> {
+    vec![
+        VoiceId::new("default", "默认音色（中性女声）", EngineKind::Qwen3Tts),
+        VoiceId::new("warm_female", "温暖亲切女声", EngineKind::Qwen3Tts),
+        VoiceId::new("professional_male", "专业沉稳男声", EngineKind::Qwen3Tts),
+        VoiceId::new("cheerful_female", "欢快活泼女声", EngineKind::Qwen3Tts),
+        VoiceId::new("deep_male", "低沉浑厚男声", EngineKind::Qwen3Tts),
+        VoiceId::new("soft_female", "轻柔舒缓女声", EngineKind::Qwen3Tts),
+    ]
+}
+
+/// 0.6B 变体的音色列表（预设 speaker embedding）
+fn small_qwen3_voices() -> Vec<VoiceId> {
+    vec![
+        VoiceId::new("serena", "Serena（自然女声）", EngineKind::Qwen3Tts),
+        VoiceId::new("vivian", "Vivian（温暖女声）", EngineKind::Qwen3Tts),
+        VoiceId::new("uncle_fu", "Uncle Fu（大叔音）", EngineKind::Qwen3Tts),
+        VoiceId::new("ryan", "Ryan（青年男声）", EngineKind::Qwen3Tts),
+        VoiceId::new("aiden", "Aiden（清亮男声）", EngineKind::Qwen3Tts),
+        VoiceId::new("ono_anna", "小野杏（日语女声）", EngineKind::Qwen3Tts),
+        VoiceId::new("sohee", "Sohee（韩语女声）", EngineKind::Qwen3Tts),
+        VoiceId::new("eric", "Eric（四川话男声）", EngineKind::Qwen3Tts),
+        VoiceId::new("dylan", "Dylan（京片子男声）", EngineKind::Qwen3Tts),
+    ]
+}
+
 pub struct Qwen3TtsProvider {
     sessions: EngineState<Qwen3TtsSessions>,
     config: Mutex<Option<Qwen3TtsConfig>>,
     embeddings: Mutex<Option<Embeddings>>,
     tokenizer: Mutex<Option<tokenizers::Tokenizer>>,
-    voices: Vec<VoiceId>,
-    /// true=0.6B（elbruno，预设 speaker embedding），
-    /// false=1.7B（wavekat，VoiceDesign instruct）
-    is_small: bool,
+    /// 当前加载的模型变体（音色列表 + 变体标记）
+    ///
+    /// 二者是同一份状态的两个投影：0.6B 有一套预设音色且 instruct 无效，
+    /// 1.7B 另一套。原先拆成 `voices: Vec<VoiceId>` 与 `is_small: bool`
+    /// 两个裸字段，加载时先改 `is_small` 后填 `voices`，
+    /// 中间若被并发读取会拿到「标记是新变体、音色列表是旧变体」的组合。
+    /// 合并为一个状态后由 `EngineState` 保证整体切换。
+    variant: EngineState<Qwen3TtsVariant>,
     /// 段内进度回调：参数 (current_step, total_steps, message)
     /// 使用 Arc 方便在闭包间共享
     progress_cb: Mutex<Option<Arc<dyn Fn(u32, u32, &str) + Send + Sync>>>,
@@ -613,38 +643,47 @@ pub struct Qwen3TtsProvider {
 
 impl Qwen3TtsProvider {
     pub fn new() -> Self {
-        let voices = vec![
-            VoiceId::new("default", "默认音色（中性女声）", EngineKind::Qwen3Tts),
-            VoiceId::new("warm_female", "温暖亲切女声", EngineKind::Qwen3Tts),
-            VoiceId::new("professional_male", "专业沉稳男声", EngineKind::Qwen3Tts),
-            VoiceId::new("cheerful_female", "欢快活泼女声", EngineKind::Qwen3Tts),
-            VoiceId::new("deep_male", "低沉浑厚男声", EngineKind::Qwen3Tts),
-            VoiceId::new("soft_female", "轻柔舒缓女声", EngineKind::Qwen3Tts),
-        ];
+        // 初始按 1.7B 变体呈现音色列表：GUI 在模型加载前就要能列出可选音色，
+        // 若返回空列表用户会误以为功能缺失。
+        let variant = EngineState::new();
+        variant.load(Qwen3TtsVariant {
+            is_small: false,
+            voices: default_qwen3_voices(),
+        });
         Self {
             sessions: EngineState::new(),
             config: Mutex::new(None),
             embeddings: Mutex::new(None),
             tokenizer: Mutex::new(None),
-            voices,
-            is_small: false,
+            variant,
             progress_cb: Mutex::new(None),
         }
     }
 
+    /// 当前已加载会话对应的变体（None = 未加载）
+    ///
+    /// 供上层判断「请求的变体是否已在内存中」，避免同变体
+    /// unload+load 反复重载（模型加载耗时 10~60 秒）。
+    pub fn loaded_is_small(&self) -> Option<bool> {
+        if !self.sessions.is_loaded() {
+            return None;
+        }
+        self.variant.with(|v| v.is_small).ok()
+    }
+
     /// 设置段内进度回调（可选，用于 GUI 进度条实时更新）
     pub fn set_progress_callback(&self, cb: Arc<dyn Fn(u32, u32, &str) + Send + Sync>) {
-        *self.progress_cb.lock().unwrap() = Some(cb);
+        *self.progress_cb.lock().unwrap_or_else(|e| e.into_inner()) = Some(cb);
     }
 
     /// 清除段内进度回调
     pub fn clear_progress_callback(&self) {
-        *self.progress_cb.lock().unwrap() = None;
+        *self.progress_cb.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     /// 报告段内进度（内部方法）
     fn report_progress(&self, current_step: u32, total_steps: u32, msg: &str) {
-        if let Some(ref cb) = *self.progress_cb.lock().unwrap() {
+        if let Some(ref cb) = *self.progress_cb.lock().unwrap_or_else(|e| e.into_inner()) {
             cb(current_step, total_steps, msg);
         }
     }
@@ -654,7 +693,11 @@ impl Qwen3TtsProvider {
     /// - 0.6B（elbruno）模型：预训练 speaker embedding，无需 instruct
     fn voice_to_instruct(&self, voice_id: &str) -> Option<String> {
         // 0.6B 模型使用预设 speaker embedding，instruct 文本无效
-        if self.is_small {
+        let is_small = self
+            .variant
+            .with(|v| v.is_small)
+            .unwrap_or(false);
+        if is_small {
             return None;
         }
         match voice_id {
@@ -672,7 +715,7 @@ impl Qwen3TtsProvider {
 impl TtsProvider for Qwen3TtsProvider {
     fn engine_kind(&self) -> EngineKind { EngineKind::Qwen3Tts }
 
-    fn load(&mut self, model: &Model) -> Result<(), TtsError> {
+    fn load(&self, model: &Model) -> Result<(), TtsError> {
         let model_dir = ModelFileLocator::locate_model_dir(model)
             .map_err(|e| TtsError::SynthesisFailed(format!("查找模型目录失败: {}", e)))?;
 
@@ -749,43 +792,36 @@ impl TtsProvider for Qwen3TtsProvider {
         let vocoder = create_onnx("vocoder.onnx")?;
 
         self.sessions.load(Qwen3TtsSessions { prefill, decode, code_predictor: cp, vocoder });
-        self.is_small = is_small;
-        *self.config.lock().unwrap() = Some(config);
-        *self.embeddings.lock().unwrap() = Some(embeddings);
-        *self.tokenizer.lock().unwrap() = Some(tokenizer);
-
-        // 根据模型变体设置音色列表
-        self.voices = if use_small {
-            vec![
-                VoiceId::new("serena", "Serena（自然女声）", EngineKind::Qwen3Tts),
-                VoiceId::new("vivian", "Vivian（温暖女声）", EngineKind::Qwen3Tts),
-                VoiceId::new("uncle_fu", "Uncle Fu（大叔音）", EngineKind::Qwen3Tts),
-                VoiceId::new("ryan", "Ryan（青年男声）", EngineKind::Qwen3Tts),
-                VoiceId::new("aiden", "Aiden（清亮男声）", EngineKind::Qwen3Tts),
-                VoiceId::new("ono_anna", "小野杏（日语女声）", EngineKind::Qwen3Tts),
-                VoiceId::new("sohee", "Sohee（韩语女声）", EngineKind::Qwen3Tts),
-                VoiceId::new("eric", "Eric（四川话男声）", EngineKind::Qwen3Tts),
-                VoiceId::new("dylan", "Dylan（京片子男声）", EngineKind::Qwen3Tts),
-            ]
-        } else {
-            vec![
-                VoiceId::new("default", "默认音色（中性女声）", EngineKind::Qwen3Tts),
-                VoiceId::new("warm_female", "温暖亲切女声", EngineKind::Qwen3Tts),
-                VoiceId::new("professional_male", "专业沉稳男声", EngineKind::Qwen3Tts),
-                VoiceId::new("cheerful_female", "欢快活泼女声", EngineKind::Qwen3Tts),
-                VoiceId::new("deep_male", "低沉浑厚男声", EngineKind::Qwen3Tts),
-                VoiceId::new("soft_female", "轻柔舒缓女声", EngineKind::Qwen3Tts),
-            ]
-        };
+        // 变体状态与会话一并切换：先装会话再装变体，
+        // 读侧若看到新变体，会话必然已就绪。
+        self.variant.load(Qwen3TtsVariant {
+            is_small,
+            voices: if use_small { small_qwen3_voices() } else { default_qwen3_voices() },
+        });
+        *self.config.lock().unwrap_or_else(|e| e.into_inner()) = Some(config);
+        *self.embeddings.lock().unwrap_or_else(|e| e.into_inner()) = Some(embeddings);
+        *self.tokenizer.lock().unwrap_or_else(|e| e.into_inner()) = Some(tokenizer);
 
         let model_size = if use_small { "0.6B" } else { "1.7B" };
-        tracing::info!("Qwen3-TTS 引擎加载完成（{}, {}，{} 种音色）", model_size, variant, self.voices.len());
+        let voice_count = self
+            .variant
+            .with(|v| v.voices.len())
+            .unwrap_or(0);
+        tracing::info!(
+            "Qwen3-TTS 引擎加载完成（{}, {}，{} 种音色）",
+            model_size, variant, voice_count
+        );
         Ok(())
     }
 
-    fn unload(&mut self) -> Result<(), TtsError> {
+    fn unload(&self) -> Result<(), TtsError> {
         self.sessions.unload();
-        self.is_small = false;
+        // 回退到 1.7B 默认变体，与 `new()` 的初始状态一致：
+        // GUI 在引擎卸载后仍需列出音色，若置空会显示空白选择器。
+        self.variant.load(Qwen3TtsVariant {
+            is_small: false,
+            voices: default_qwen3_voices(),
+        });
         *self.config.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.embeddings.lock().unwrap_or_else(|e| e.into_inner()) = None;
         *self.tokenizer.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -798,16 +834,23 @@ impl TtsProvider for Qwen3TtsProvider {
         voice: &VoiceId,
         _params: &TtsParams,
     ) -> Result<AudioData, TtsError> {
-        let cfg = self.config.lock().unwrap();
-        let cfg = cfg.as_ref().ok_or(TtsError::EngineNotLoaded)?.clone();
-        let emb = self.embeddings.lock().unwrap();
+        // 配置已 clone 出来，guard 必须在此立即释放。
+        // 旧写法把 guard 一直持有到函数结束（数分钟的自回归推理），
+        // 期间 unload() 会被长时间阻塞，回调其它方法则因 std::sync::Mutex
+        // 非可重入而自死锁
+        let cfg = {
+            let guard = self.config.lock().unwrap_or_else(|e| e.into_inner());
+            guard.as_ref().ok_or(TtsError::EngineNotLoaded)?.clone()
+        };
+        // 嵌入表（1.18GB mmap）与分词器为只读共享数据，整个合成期间都需要借用，
+        // 故仍需持有 guard；后续若改为 Arc 快照可进一步缩短持锁时间
+        let emb = self.embeddings.lock().unwrap_or_else(|e| e.into_inner());
         let emb = emb.as_ref().ok_or(TtsError::EngineNotLoaded)?;
-        let tok = self.tokenizer.lock().unwrap();
+        let tok = self.tokenizer.lock().unwrap_or_else(|e| e.into_inner());
         let tok = tok.as_ref().ok_or(TtsError::EngineNotLoaded)?;
         if text.is_empty() { return Err(TtsError::EmptyText); }
 
         tracing::info!("Qwen3-TTS 合成: text='{}' ({} chars), voice={}", text, text.chars().count(), voice.id);
-        println!("[synthesize] 进入合成方法：text='{}'", text);
 
         // ---- 1. Tokenize ----
         // Windows CRLF → LF 转换，确保 token 序列与 Python 参考一致
@@ -886,10 +929,12 @@ impl TtsProvider for Qwen3TtsProvider {
             let mk_v = Value::from_array(mask_arr.into_dyn()).map_err(map_ort_err)?;
             let pp_v = Value::from_array(pos_arr.into_dyn()).map_err(map_ort_err)?;
 
-            println!("[prefill] 开始推理...");
+            // 改用 tracing：生产路径不应直写 stdout。
+            // GUI 子系统下 stdout 句柄可能无效，而 println! 在写入失败时会 panic
+            tracing::debug!("[prefill] 开始推理...");
             let pf_out = sessions.prefill.run(ort::inputs![pf_v, mk_v, pp_v])
                 .map_err(map_ort_err)?;
-            println!("[prefill] 推理完成, {} 个输出", pf_out.len());
+            tracing::debug!("[prefill] 推理完成, {} 个输出", pf_out.len());
 
             if pf_out.len() < 3 {
                 return Err(TtsError::SynthesisFailed(format!("prefill 输出不足: {}", pf_out.len())));
@@ -904,7 +949,7 @@ impl TtsProvider for Qwen3TtsProvider {
                 let s = pf_logits_raw.as_slice().unwrap_or(&[]);
                 if !s.is_empty() {
                     let mut sorted: Vec<f32> = s.iter().copied().collect();
-                    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                     let n = sorted.len();
                     let mean: f32 = s.iter().sum::<f32>() / n as f32;
                     tracing::info!("  prefill logits: min={:.4}, max={:.4}, mean={:.4}, p50={:.4}, p90={:.4}, p99={:.4}",
@@ -1198,7 +1243,13 @@ impl TtsProvider for Qwen3TtsProvider {
         Ok(audio)
     }
 
-    fn list_voices(&self) -> Vec<VoiceId> { self.voices.clone() }
+    fn list_voices(&self) -> Vec<VoiceId> {
+        // 未加载时回退到 1.7B 的通用音色列表，与 `Qwen3TtsProvider::new()`
+        // 初始状态保持一致，避免 GUI 在加载前显示空列表
+        self.variant
+            .with(|v| v.voices.clone())
+            .unwrap_or_else(|_| default_qwen3_voices())
+    }
     fn sample_rate(&self) -> u32 { SAMPLE_RATE }
     fn is_loaded(&self) -> bool { self.sessions.is_loaded() }
 }
@@ -1227,8 +1278,12 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "slow-models"),
+        ignore = "需本地 Qwen3-TTS 模型（0.6b/1.7b）；跑法：cargo test -p votex-infra --features slow-models"
+    )]
     fn test_load_models() {
-        let mut provider = Qwen3TtsProvider::new();
+        let provider = Qwen3TtsProvider::new();
         let model = Model::new(
             ModelId::new("qwen3-tts"),
             "Qwen3-TTS",
@@ -1249,6 +1304,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "slow-models"),
+        ignore = "需本地 Qwen3-TTS 模型（加载 4 个 ONNX 会话）；跑法：cargo test -p votex-infra --features slow-models"
+    )]
     fn test_load_single_onnx() {
         use crate::shared::OrtSessionFactory;
         use std::path::Path;
@@ -1288,6 +1347,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "slow-models"),
+        ignore = "需本地 Qwen3-TTS 模型（4 会话同时加载约 4.3G 内存）；跑法：cargo test -p votex-infra --features slow-models"
+    )]
     fn test_load_all_onnx_simultaneously() {
         use crate::shared::OrtSessionFactory;
         use std::path::Path;
@@ -1332,6 +1395,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        not(feature = "slow-models"),
+        ignore = "需本地 Qwen3-TTS 模型（0.6b/1.7b）；跑法：cargo test -p votex-infra --features slow-models"
+    )]
     fn test_synthesize() {
         // 初始化 tracing subscriber 以捕获日志
         let _ = tracing_subscriber::fmt()
@@ -1342,7 +1409,7 @@ mod tests {
         // 测试环境无 DirectML 支持，强制 CPU 避免崩溃
         OrtSessionFactory::set_global_ep(ExecutionProvider::Cpu);
 
-        let mut provider = Qwen3TtsProvider::new();
+        let provider = Qwen3TtsProvider::new();
         let model = Model::new(
             ModelId::new("qwen3-tts"),
             "Qwen3-TTS",

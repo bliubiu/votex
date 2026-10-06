@@ -1,0 +1,23 @@
+id: paddleocr-v6-tiny
+name: PaddleOCR v6 Tiny
+kind: Ocr
+engine: PaddleOCR
+sub_dir: paddleocr-v6
+# 注：ModelScope 的 PP-OCRv6-tiny-det / -rec 仓库路径已失效（HTTP 404），
+# 原先声明的 modelscope 源会因 application.yml 中 modelscope 优先级最高而直接失败。
+# 现仅保留 HuggingFace / hf-mirror 两个可用源。
+files:
+  - name: ch_PP-OCRv6_det_tiny.onnx
+    sha256: 193bab7a04fca699a6c82e6abb5b81bdb28177f0abd4062552b04908dafb19f8
+    sources:
+      huggingface: https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_det_onnx/resolve/main/inference.onnx
+      hf-mirror: https://hf-mirror.com/PaddlePaddle/PP-OCRv6_tiny_det_onnx/resolve/main/inference.onnx
+  - name: ch_PP-OCRv6_rec_tiny.onnx
+    sha256: e16e242de5937ad92609223f19bc2aff3727ee40b095f996907c24749bad251b
+    sources:
+      huggingface: https://huggingface.co/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/main/inference.onnx
+      hf-mirror: https://hf-mirror.com/PaddlePaddle/PP-OCRv6_tiny_rec_onnx/resolve/main/inference.onnx
+  - name: ch_ppocr_mobile_v2.0_cls_mobile.onnx
+    sha256: e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c
+    sources:
+      modelscope: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.8.0/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx

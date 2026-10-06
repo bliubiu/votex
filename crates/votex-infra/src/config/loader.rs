@@ -24,6 +24,10 @@ impl ConfigLoader {
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("读取配置文件失败: {} - {}", path.display(), e))?;
 
+        // 敏感字段解密：加密落盘的 ENC(...) 密钥必须在此还原为明文，
+        // 否则保存路径加密、读取路径却拿密文当 key 用（闭环缺失）
+        let content = crate::security::config_crypto::ConfigCrypto::decrypt_config_content(&content, None);
+
         let config: AppConfig = serde_yml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("解析配置文件失败: {} - {}", path.display(), e))?;
 
@@ -36,6 +40,59 @@ impl ConfigLoader {
         let config: AppConfig = serde_yml::from_str(yaml)
             .map_err(|e| anyhow::anyhow!("解析 YAML 字符串失败: {}", e))?;
         Ok(config)
+    }
+
+    /// 可选地加载配置文件：文件不存在属正常，解析失败必须显式暴露
+    ///
+    /// 设计要点（修复"配置静默失效"缺陷）：
+    /// - **文件不存在**：首次启动的正常场景，静默返回 `None`（由调用方用内置默认值）
+    /// - **解析失败**：配置文件存在但内容有误，此时**绝不静默降级**。
+    ///   因为日志系统尚未初始化，直接写 stderr 保证用户一定看到，
+    ///   并返回 `None` 让程序继续用默认值运行（不阻断启动）
+    ///
+    /// 调用方禁止再写 `.ok()` 把本方法的告警吞掉——历史上正是因为
+    /// `read_to_string().ok().and_then(|c| serde_yml::from_str(&c).ok())`
+    /// 这种双重静默吞错，导致 `application.yml` 里一行 YAML 语法错误
+    /// 就让整份配置（含 DirectML 崩溃保护开关）失效且毫无提示。
+    pub fn load_optional(path: &Path) -> Option<AppConfig> {
+        // 文件不存在是正常情况（首次启动），不打扰用户
+        if !path.exists() {
+            return None;
+        }
+
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!(
+                    "[配置错误] 读取配置文件失败: {} - {}",
+                    path.display(),
+                    e
+                );
+                eprintln!("[配置错误] 程序将使用内置默认配置运行。");
+                return None;
+            }
+        };
+
+        // 敏感字段解密（与 from_file 一致；解密失败保留密文原值）
+        let content = crate::security::config_crypto::ConfigCrypto::decrypt_config_content(&content, None);
+
+        match serde_yml::from_str::<AppConfig>(&content) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                // YAML 语法错误（如注释 `#` 前缺空格、缩进错误、类型不匹配）
+                // 会导致整份配置反序列化失败，必须让用户知道
+                eprintln!(
+                    "[配置错误] 解析配置文件失败: {} - {}",
+                    path.display(),
+                    e
+                );
+                eprintln!(
+                    "[配置错误] 常见原因：注释 `#` 前缺少空格、缩进不一致、字段类型不匹配。"
+                );
+                eprintln!("[配置错误] 程序将使用内置默认配置运行，请修正配置文件后重启。");
+                None
+            }
+        }
     }
 
     /// 生成默认配置的 YAML 文件
@@ -62,8 +119,7 @@ impl ConfigLoader {
     }
 
     /// 生成默认配置 YAML 字符串
-    #[allow(dead_code)]
-    pub fn default_yaml() -> String {
+        pub fn default_yaml() -> String {
         serde_yml::to_string(&AppConfig::default())
             .expect("序列化默认配置失败")
     }

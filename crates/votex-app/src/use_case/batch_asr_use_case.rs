@@ -1,14 +1,14 @@
 //! 批量 ASR 识别用例
 //!
 //! 递归扫描音频目录，对每个音频文件执行 ASR 识别。
-//! 支持 WAV 格式，其他格式需先转换（预留接口）。
+//! WAV 直接识别；MP3/M4A/FLAC 等压缩格式经 ffmpeg 转码后识别，
+//! 无法处理的格式按文件记录失败，不中断批次。
 
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use votex_domain::shared::value_object::TaskId;
 use votex_domain::tts::value_object::DenoiseLevel as DenoiseLevelTts;
-use crate::use_case::asr_use_case::AsrUseCase;
 
 /// ASR 批量任务结果
 #[derive(Debug, Clone)]
@@ -46,6 +46,11 @@ pub struct BatchAsrConfig<'a> {
     pub denoise: bool,
     /// 降噪级别
     pub denoise_level: DenoiseLevelTts,
+    /// 取消令牌（置 true 后 worker 跳出循环，不再处理剩余文件）
+    ///
+    /// 与 `BatchTtsConfig::cancel` 同型。之前批量 ASR 没有这个字段，
+    /// 导致 GUI 的「取消」对批量任务完全无效。
+    pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for BatchAsrConfig<'_> {
@@ -61,6 +66,7 @@ impl Default for BatchAsrConfig<'_> {
             concurrency: 1,
             denoise: false,
             denoise_level: DenoiseLevelTts::Low,
+            cancel: None,
         }
     }
 }
@@ -95,9 +101,20 @@ impl BatchAsrUseCase {
         let mut results = Vec::with_capacity(file_count);
 
         // 串行执行（ASR 引擎通常是单线程的）
-        let mut asr = AsrUseCase::new();
+        let asr = crate::services::shared_cases::shared_asr();
 
         for (i, file_path) in files.iter().enumerate() {
+            // 每个文件边界检查取消：批量任务可能包含数十个长音频，
+            // 没有这个检查用户点「取消」后仍要等全部处理完。
+            if let Some(flag) = config.cancel.as_deref() {
+                if flag.load(std::sync::atomic::Ordering::SeqCst) {
+                    tracing::info!(
+                        "批量 ASR 已取消（已完成 {}/{} 个文件）",
+                        i, file_count
+                    );
+                    break;
+                }
+            }
             tracing::info!("处理第 {}/{}: {:?}", i + 1, file_count, file_path);
 
             // 构建输出路径：保留相对于输入目录的路径结构
@@ -130,6 +147,7 @@ impl BatchAsrUseCase {
                 config.model,
                 config.language,
                 config.format,
+                config.cancel.as_deref(),
             ) {
                 Ok(result) => {
                     let duration_secs = result.subtitles.last()

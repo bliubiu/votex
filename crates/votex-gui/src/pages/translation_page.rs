@@ -66,13 +66,20 @@ impl TranslationPage {
                             let source_text = state.translation.source_text.clone();
                             let engine = state.translation.engine.clone();
                             let direction = state.translation.direction.clone();
-                            crate::task_runner::spawn_translate(tx, source_text, engine, direction);
+                            // 取消令牌由页面持有并复用，取消按钮才能拿到同一个令牌
+                            let token = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                            state.translation.cancel_token = Some(std::sync::Arc::clone(&token));
+                            crate::task_runner::spawn_translate(tx, source_text, engine, direction, Some(token));
                         }
                     }
                 } else {
                     if PageLayout::danger_button(ui, "取消", true).clicked() {
-                        state.translation.is_running = false;
-                        state.translation.progress_text = "已取消".to_string();
+                        // 置位取消令牌，后台任务在下一个片段边界中断；
+                        // 终态由后台 Success/Error 事件统一复位（与 TTS 页一致）
+                        if let Some(ref token) = state.translation.cancel_token {
+                            token.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        state.translation.progress_text = "正在取消...".to_string();
                     }
                 }
             });

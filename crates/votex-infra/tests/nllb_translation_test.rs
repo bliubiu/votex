@@ -59,7 +59,7 @@ fn load_nllb() -> NllbProvider {
         "分词器模型不存在"
     );
 
-    let mut engine = NllbProvider::new()
+    let engine = NllbProvider::new()
         .with_tokenizer_config(tokenizer_config);
     engine
         .load_from_dir(&model_dir)
@@ -67,6 +67,7 @@ fn load_nllb() -> NllbProvider {
     engine
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test nllb_translation_test --features slow-models")]
 #[test]
 fn test_nllb_model_files_exist() {
     let model_dir = nllb_model_dir();
@@ -84,12 +85,14 @@ fn test_nllb_model_files_exist() {
     println!("✓ NLLB 模型文件齐全 (INT8 优先)");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test nllb_translation_test --features slow-models")]
 #[test]
 fn test_nllb_load_model() {
     let _engine = load_nllb();
     println!("✓ NLLB 模型加载成功");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test nllb_translation_test --features slow-models")]
 #[test]
 fn test_nllb_translate_zh_en() {
     let engine = load_nllb();
@@ -107,6 +110,7 @@ fn test_nllb_translate_zh_en() {
     println!("✓ zh→en 翻译完成");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test nllb_translation_test --features slow-models")]
 #[test]
 fn test_nllb_translate_en_zh() {
     let engine = load_nllb();
@@ -124,6 +128,7 @@ fn test_nllb_translate_en_zh() {
     println!("✓ en→zh 翻译完成");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test nllb_translation_test --features slow-models")]
 #[test]
 fn test_nllb_empty_text_should_error() {
     let engine = load_nllb();
@@ -133,6 +138,7 @@ fn test_nllb_empty_text_should_error() {
     println!("✓ 空文本正确返回错误");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test nllb_translation_test --features slow-models")]
 #[test]
 fn test_nllb_translate_sentence() {
     let engine = load_nllb();

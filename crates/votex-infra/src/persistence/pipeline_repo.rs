@@ -35,16 +35,15 @@ impl SqlitePipelineRepository {
 
     /// 列出所有流水线（按创建时间降序）
     pub fn list_all(&self) -> Vec<Pipeline> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
-        let mut stmt = match conn.prepare(
-            "SELECT data_json FROM pipelines ORDER BY created_at DESC",
+        let mut stmt = match conn.prepare("SELECT data_json FROM pipelines ORDER BY created_at DESC",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("pipeline_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -53,10 +52,19 @@ impl SqlitePipelineRepository {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("pipeline_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("pipeline_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 
     /// 更新流水线状态
@@ -107,9 +115,9 @@ impl SqlitePipelineRepository {
 
 impl PipelineRepository for SqlitePipelineRepository {
     fn find_by_id(&self, id: &PipelineId) -> Option<Pipeline> {
-        let conn = self.conn.lock().ok()?;
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
         let id_str = id.as_str();
-        conn.query_row(
+        match conn.query_row(
             "SELECT data_json FROM pipelines WHERE id = ?1",
             params![id_str],
             |row| {
@@ -117,8 +125,16 @@ impl PipelineRepository for SqlitePipelineRepository {
                 serde_json::from_str::<Pipeline>(&json)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
             },
-        )
-        .ok()
+        ) {
+            // 区分「查不到行」与「查询出错」——后者必须留痕，
+            // 否则调用方会误判为任务不存在而重复创建
+            Ok(v) => Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => {
+                crate::persistence::guard::log_err("pipelines.find_by_id", &e);
+                None
+            }
+        }
     }
 
     fn save(&self, pipeline: &Pipeline) -> Result<(), DomainError> {
@@ -165,16 +181,15 @@ impl PipelineRepository for SqlitePipelineRepository {
     }
 
     fn find_incomplete(&self) -> Vec<Pipeline> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
-        let mut stmt = match conn.prepare(
-            "SELECT data_json FROM pipelines WHERE status IN ('Idle', 'Running', 'Paused')",
+        let mut stmt = match conn.prepare("SELECT data_json FROM pipelines WHERE status IN ('Idle', 'Running', 'Paused')",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("pipeline_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -183,10 +198,19 @@ impl PipelineRepository for SqlitePipelineRepository {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("pipeline_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("pipeline_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 }
 

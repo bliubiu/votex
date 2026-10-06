@@ -1,29 +1,36 @@
-﻿//! Paraformer ASR 引擎（ONNX 推理）
+//! Paraformer ASR 引擎（sherpa-onnx 绑定）
 //!
 //! Paraformer 是阿里达摩院（FunASR）的非自回归端到端语音识别模型，
 //! 支持中文、英文、中英混合识别，推理速度快于传统自回归模型。
 //!
-//! # 模型文件
-//! - `models/Paraformer/model.onnx` - 主模型
-//! - `models/Paraformer/tokens.txt` - 词表文件
-//! - `models/Paraformer/am.mvn` - 特征归一化参数（可选）
+//! # 实现说明
 //!
-//! # 集成状态
-//! 【已完成】ONNX 推理管线集成
+//! 通过 sherpa-onnx Rust 绑定推理（与 `firered_asr.rs` / `qwen3_asr.rs` 同范式）。
+//! 特征提取（kaldi fbank 80 维 + LFR 7×80=560 维堆叠 + CMVN 归一）由
+//! sherpa-onnx 运行时完成，本项目不再自行实现特征前端。
+//!
+//! ⚠️ 历史教训：此前的"自行实现"只把帧能量乘线性系数填满 80 维——
+//! 不是 mel 特征，识别输出是无效数据，但注释却标注「已完成」。
+//! 模型输入分布必须与训练分布一致，没有金标对拍前不要手写特征前端。
+//!
+//! # 模型文件（models/asr/paraformer/）
+//! - `model_quant.onnx` - 主模型（FunASR 导出，CMVN 已内嵌图中）
+//! - `tokens.json` - 词表（FunASR 导出为 JSON 数组；sherpa-onnx 只认
+//!   `token id` 格式的 tokens.txt，加载时派生到系统临时目录）
+//! - `config.yaml` - 前端参数（fs=16k, hamming, 80 mel, LFR m=7 n=6）
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-use ndarray::Array3;
-use ort::session::Session;
-
+use sherpa_onnx::{
+    OfflineParaformerModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
+};
 use votex_domain::asr::provider::AsrProvider;
 use votex_domain::asr::value_object::{AsrParams, RecognizeOutput, WordTimestamp};
 use votex_domain::error::AsrError;
 use votex_domain::model::entity::Model;
 use votex_domain::model::value_object::EngineKind;
 use votex_domain::shared::value_object::AudioData;
-
-use crate::shared::{EngineState, ModelFileLocator, OrtSessionFactory};
 
 /// 读取 Paraformer 词表，兼容两种磁盘格式（F53）
 ///
@@ -90,87 +97,126 @@ fn strip_json_array_lines(content: &str) -> Option<Vec<String>> {
     }
 }
 
-/// Paraformer ASR Provider（ONNX 推理）
+/// Paraformer ASR Provider（sherpa-onnx 分图 ONNX 推理）
 pub struct ParaformerProvider {
-    state: EngineState<Session>,
-    tokens: Vec<String>,
+    recognizer: Mutex<Option<OfflineRecognizer>>,
+    sample_rate: u32,
 }
 
 impl ParaformerProvider {
     pub fn new() -> Self {
         Self {
-            state: EngineState::new(),
-            tokens: Vec::new(),
+            recognizer: Mutex::new(None),
+            sample_rate: 16000,
         }
     }
 
     /// 从模型目录加载
-    fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), AsrError> {
-        // F53：FunASR 导出的资产名为 `model_quant.onnx`，规范名为 `model.onnx`，
-        // 单文件名断言会让已有资产无法加载，这里按候选名依次探测。
-        let model_path = ModelFileLocator::find_first_existing(
+    fn load_from_dir(&self, model_dir: &Path) -> Result<(), AsrError> {
+        // ⚠️ 进程安全护栏：sherpa-onnx 的 Paraformer 加载器要求模型 ONNX
+        // 元数据含 `vocab_size`（官方转换包有，FunASR 原始导出没有），
+        // 元数据缺失时 sherpa C++ 端直接 abort——**整个进程崩溃**，
+        // 无法用 Result 捕获。因此必须在调用 sherpa 前拒绝已知不兼容的
+        // FunASR 导出（model_quant.onnx，来自 modelscope iic/...-onnx 仓库）。
+        // 需要换用 sherpa-onnx 官方发布包（sherpa-onnx-paraformer-zh-*，
+        // 含 model.int8.onnx + tokens.txt），届时同步更新 registry 源。
+        let model_path = ModelFileLocatorHelper::find_first_existing(
             model_dir,
-            &["model_quant.onnx", "model.onnx", "model.int8.onnx"],
-        )
-        .map_err(|e| AsrError::ModelNotFound(format!("{}", e)))?;
+            &["model.int8.onnx", "model.onnx"],
+        );
+        let model_path = match model_path {
+            Ok(p) => p,
+            Err(_) if model_dir.join("model_quant.onnx").exists() => {
+                return Err(AsrError::LoadFailed(
+                    "当前 Paraformer 模型为 FunASR 原始导出（model_quant.onnx），\
+                     缺少 sherpa-onnx 所需的 vocab_size 元数据，直接加载会崩溃进程，已拒绝。\
+                     请改用 sherpa-onnx 官方转换包（sherpa-onnx-paraformer-zh-*，\
+                     含 model.int8.onnx 与 tokens.txt）"
+                        .to_string(),
+                ));
+            }
+            Err(e) => return Err(AsrError::ModelNotFound(format!("{}", e))),
+        };
         let tokens_path =
-            ModelFileLocator::find_first_existing(model_dir, &["tokens.txt", "tokens.json"])
+            ModelFileLocatorHelper::find_first_existing(model_dir, &["tokens.txt", "tokens.json"])
                 .map_err(|e| AsrError::ModelNotFound(format!("{}", e)))?;
 
-        // 使用 OrtSessionFactory 创建 Session
-        let session = OrtSessionFactory::create(&model_path)
-            .map_err(|e| AsrError::LoadFailed(format!("{}", e)))?;
-        self.state.load(session);
+        // sherpa-onnx 只认 `token id` 行格式的 tokens.txt；
+        // FunASR 导出是 JSON 数组 → 解析后派生一份到系统临时目录（创建识别器后即删）
+        let tokens_for_sherpa = if tokens_path.extension().and_then(|e| e.to_str()) == Some("json") {
+            Some(Self::derive_tokens_txt(&tokens_path)?)
+        } else {
+            None
+        };
+        let tokens_ref_path = tokens_for_sherpa
+            .as_deref()
+            .unwrap_or(tokens_path.as_path());
 
-        // 加载词表
-        self.tokens = load_tokens(&tokens_path)?;
+        let mut config = OfflineRecognizerConfig::default();
+        config.model_config.paraformer = OfflineParaformerModelConfig {
+            model: Some(model_path.to_string_lossy().to_string()),
+        };
+        config.model_config.tokens = Some(tokens_ref_path.to_string_lossy().to_string());
+        config.model_config.num_threads = std::thread::available_parallelism()
+            .map(|n| n.get() as i32)
+            .unwrap_or(4);
+
+        let recognizer = OfflineRecognizer::create(&config)
+            .ok_or_else(|| AsrError::LoadFailed("创建 Paraformer 识别器失败".to_string()))?;
+
+        // tokens.txt 派生文件已读完，立即清理
+        if let Some(p) = tokens_for_sherpa {
+            let _ = std::fs::remove_file(&p);
+        }
+
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = Some(recognizer);
 
         tracing::info!(
-            "Paraformer 模型加载完成，词表: {:?}，词表条目数: {}",
-            tokens_path.file_name().unwrap_or_default(),
-            self.tokens.len()
+            "Paraformer ONNX 引擎加载完成 (模型: {:?}, 词表: {:?})",
+            model_path.file_name().unwrap_or_default(),
+            tokens_path.file_name().unwrap_or_default()
         );
         Ok(())
     }
 
-    /// 将 f32 PCM 转换为梅尔频谱特征
-    fn audio_to_mel(&self, audio: &AudioData) -> Result<Array3<f32>, AsrError> {
-        let pcm = audio.to_mono_f32_16k();
-        let n_samples = pcm.len();
-
-        let frame_length = 400; // 25ms @ 16kHz
-        let frame_shift = 160; // 10ms @ 16kHz
-
-        if n_samples < frame_length {
-            return Err(AsrError::EmptyAudio);
+    /// 从 FunASR tokens.json 派生 sherpa-onnx 行格式的 tokens.txt
+    ///
+    /// 写入系统临时目录（模型目录可能是只读的），返回文件路径；
+    /// 调用方在识别器创建完成后负责删除。
+    fn derive_tokens_txt(tokens_json: &Path) -> Result<PathBuf, AsrError> {
+        let tokens = load_tokens(tokens_json)?;
+        let path = std::env::temp_dir().join(format!(
+            "votex_paraformer_tokens_{}.txt",
+            std::process::id()
+        ));
+        let mut content = String::with_capacity(tokens.len() * 12);
+        for (id, token) in tokens.iter().enumerate() {
+            // token 内含空白会让 sherpa 词表错位，必须替换（词表中此类 token 不参与解码）
+            let safe = token.replace([' ', '\t', '\r', '\n'], "_");
+            content.push_str(&format!("{} {}\n", safe, id));
         }
-        let n_frames = (n_samples - frame_length) / frame_shift + 1;
-        let n_mels = 80;
+        std::fs::write(&path, content)
+            .map_err(|e| AsrError::LoadFailed(format!("写入派生词表失败: {}", e)))?;
+        Ok(path)
+    }
+}
 
-        // 创建特征张量 (batch=1, frames, n_mels)
-        let mut features = vec![0.0f32; n_frames * n_mels];
+/// 模型文件定位（局部辅助，避免与其他引擎的实现耦合）
+struct ModelFileLocatorHelper;
 
-        // 简化的特征提取（实际应使用 FFT + 梅尔滤波器）
-        for frame_idx in 0..n_frames {
-            let start = frame_idx * frame_shift;
-            let end = start + frame_length;
-            if end > n_samples {
-                break;
-            }
-
-            // 计算帧能量作为简化特征
-            let frame_energy: f32 = pcm[start..end].iter().map(|&x| x * x).sum::<f32>() / frame_length as f32;
-            let log_energy = (frame_energy + 1e-10).ln();
-
-            // 将能量分布到 80 个梅尔频段（简化处理）
-            for mel_idx in 0..n_mels {
-                let idx = frame_idx * n_mels + mel_idx;
-                features[idx] = log_energy * (1.0 - mel_idx as f32 / n_mels as f32);
+impl ModelFileLocatorHelper {
+    fn find_first_existing(dir: &Path, names: &[&str]) -> Result<PathBuf, anyhow::Error> {
+        for name in names {
+            let p = dir.join(name);
+            if p.exists() {
+                return Ok(p);
             }
         }
-
-        Array3::from_shape_vec((1, n_frames, n_mels), features)
-            .map_err(|e| AsrError::RecognizeFailed(format!("创建特征张量失败: {}", e)))
+        Err(anyhow::anyhow!(
+            "{:?} 中未找到以下任一文件: {}",
+            dir,
+            names.join(" / ")
+        ))
     }
 }
 
@@ -179,15 +225,14 @@ impl AsrProvider for ParaformerProvider {
         EngineKind::Paraformer
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), AsrError> {
-        let model_dir = ModelFileLocator::locate_model_dir(model)
+    fn load(&self, model: &Model) -> Result<(), AsrError> {
+        let model_dir = ModelFileLocatorHelper::find_first_existing_dir(model)
             .map_err(|e| AsrError::ModelNotFound(format!("{}", e)))?;
         self.load_from_dir(&model_dir)
     }
 
-    fn unload(&mut self) -> Result<(), AsrError> {
-        self.state.unload();
-        self.tokens.clear();
+    fn unload(&self) -> Result<(), AsrError> {
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = None;
         tracing::info!("Paraformer 引擎已释放");
         Ok(())
     }
@@ -197,63 +242,81 @@ impl AsrProvider for ParaformerProvider {
         audio: &AudioData,
         _params: &AsrParams,
     ) -> Result<RecognizeOutput, AsrError> {
-        if audio.samples.is_empty() {
+        let guard = self.recognizer.lock().unwrap_or_else(|e| e.into_inner());
+        let recognizer = guard.as_ref().ok_or(AsrError::EngineNotLoaded)?;
+
+        // 转换为 16kHz 单声道 f32 PCM
+        let pcm_data = audio.to_mono_f32_16k();
+        if pcm_data.is_empty() {
             return Err(AsrError::EmptyAudio);
         }
-        // 提取梅尔频谱特征
-        let mel_features = self.audio_to_mel(audio)?;
 
-        // 准备输入
-        let input_value = ort::value::Value::from_array(mel_features)
-            .map_err(|e| AsrError::RecognizeFailed(format!("创建输入值失败: {}", e)))?;
+        // 创建流并输入音频
+        let stream = recognizer.create_stream();
+        stream.accept_waveform(self.sample_rate as i32, &pcm_data);
 
-        // 使用 EngineState 安全访问 session 并执行推理
-        let output_ids_vec = self.state.with_mut(|session| {
-            let outputs = session
-                .run(ort::inputs![input_value])
-                .map_err(|e| AsrError::RecognizeFailed(format!("Paraformer 推理失败: {}", e)))?;
+        // 执行推理
+        recognizer.decode(&stream);
 
-            let output_ids = outputs[0]
-                .try_extract_array::<i64>()
-                .map_err(|e| AsrError::RecognizeFailed(format!("提取输出失败: {}", e)))?;
+        // 获取结果
+        let result = stream
+            .get_result()
+            .ok_or_else(|| AsrError::RecognizeFailed("Paraformer 推理未返回结果".to_string()))?;
 
-            Ok::<Vec<i64>, AsrError>(output_ids.iter().copied().collect())
-        }).map_err(|_| AsrError::EngineNotLoaded)??;
+        tracing::info!("Paraformer 识别完成: 文本长度 {}", result.text.len());
 
-        // 解码文本
-        let mut text = String::new();
-        let mut word_timestamps = Vec::new();
-
-        for token_id in output_ids_vec {
-            if token_id > 0 && (token_id as usize) < self.tokens.len() {
-                let token = &self.tokens[token_id as usize];
-                if !text.is_empty() {
-                    text.push(' ');
-                }
-                text.push_str(token);
-
-                word_timestamps.push(WordTimestamp {
-                    word: token.clone(),
-                    start_ms: 0.0,
-                    end_ms: 0.0,
-                });
-            }
-        }
-
-        tracing::info!("Paraformer 识别完成: 文本长度 {}", text.len());
+        // 将整段文本作为一个时间戳项（sherpa Paraformer 无词级时间戳）
+        let word_timestamps = if result.text.is_empty() {
+            Vec::new()
+        } else {
+            vec![WordTimestamp {
+                word: result.text.clone(),
+                start_ms: 0.0,
+                end_ms: 0.0,
+            }]
+        };
 
         Ok(RecognizeOutput {
-            text,
+            text: result.text,
             word_timestamps,
         })
     }
 
     fn sample_rate(&self) -> u32 {
-        16000
+        self.sample_rate
     }
 
     fn is_loaded(&self) -> bool {
-        self.state.is_loaded()
+        self.recognizer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+}
+
+impl ModelFileLocatorHelper {
+    /// 定位 Paraformer 模型目录（models/asr/paraformer/ 等）
+    fn find_first_existing_dir(model: &Model) -> Result<PathBuf, anyhow::Error> {
+        for dir in [
+            PathBuf::from("models").join("asr").join("paraformer"),
+            PathBuf::from("models").join("paraformer"),
+        ] {
+            if dir.is_dir() {
+                return Ok(dir);
+            }
+        }
+        let by_name = PathBuf::from("models").join(&model.name);
+        if by_name.is_dir() {
+            return Ok(by_name);
+        }
+        let as_path = PathBuf::from(&model.name);
+        if as_path.is_dir() {
+            return Ok(as_path);
+        }
+        Err(anyhow::anyhow!(
+            "未找到 Paraformer 模型目录，请将模型文件放在 models/asr/paraformer/ 目录下。\
+             需要文件: model_quant.onnx, tokens.json"
+        ))
     }
 }
 
@@ -317,5 +380,17 @@ mod tests {
         fs::write(&path, "").unwrap();
         assert!(load_tokens(&path).is_err(), "空词表必须报错而非静默通过");
     }
-}
 
+    #[test]
+    fn 词表_json派生tokens_txt行格式() {
+        let dir = tempdir().unwrap();
+        let json = dir.path().join("tokens.json");
+        fs::write(&json, "[\"<blank>\", \"你\", \"好\"]").unwrap();
+
+        let derived = ParaformerProvider::derive_tokens_txt(&json).unwrap();
+        let content = fs::read_to_string(&derived).unwrap();
+        fs::remove_file(&derived).ok();
+
+        assert_eq!(content, "<blank> 0\n你 1\n好 2\n");
+    }
+}

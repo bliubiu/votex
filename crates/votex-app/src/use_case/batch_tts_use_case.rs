@@ -23,7 +23,7 @@ use votex_domain::shared::value_object::TaskId;
 use votex_domain::tts::value_object::{AudioFormat, DenoiseLevel};
 use votex_infra::audio::denoiser;
 use votex_infra::encoding::detector::EncodingDetector;
-use votex_infra::shared::InferenceGate;
+use votex_infra::shared::{GateCancel, InferenceGate};
 
 use crate::use_case::tts_use_case::{engine_memory_estimate_mb, TtsUseCase};
 
@@ -175,6 +175,9 @@ impl BatchTtsUseCase {
 
         // 并发闸门：请求数受内存压力限制（Red=0 排队, Yellow=1, Green=配置值）
         let gate = InferenceGate::global();
+        // 闸门取消令牌复用 config.cancel（Option<Arc<AtomicBool>>），
+        // 使「排队等许可」阶段也能被 GUI 的停止操作中断
+        let gate_cancel = GateCancel::from_atomic(config.cancel.as_ref().map(|c| Arc::clone(c)));
         let estimate_mb = engine_memory_estimate_mb(config.engine, config.model_override);
         let requested = config.concurrency.max(1);
         let workers = requested.min(gate.max_permits()).max(1);
@@ -223,6 +226,8 @@ impl BatchTtsUseCase {
                 let manifest_lock = &manifest_lock;
                 let manifest_path = &manifest_path;
                 let done_count = &done_count;
+                // 令牌按 worker 克隆（内部 Arc，克隆代价低且共享同一标志）
+                let gate_cancel = &gate_cancel;
 
                 handles.push(scope.spawn(move || {
                     loop {
@@ -244,9 +249,16 @@ impl BatchTtsUseCase {
 
                         let started = std::time::Instant::now();
                         let synth_result = {
-                            // 推理闸门：内存预检 + 并发限流
-                            let _permit = gate.acquire(estimate_mb);
-                            let mut tts = shared_tts.lock().unwrap();
+                            // 推理闸门：内存预检 + 并发限流（可取消）
+                            let _permit = match gate.acquire(&gate_cancel, estimate_mb) {
+                                Ok(p) => p,
+                                // 被取消：跳出 worker 循环，剩余条目不再处理
+                                Err(_) => {
+                                    tracing::info!("批量合成已被取消，跳过剩余条目");
+                                    break;
+                                }
+                            };
+                            let tts = shared_tts.lock().unwrap_or_else(|e| e.into_inner());
                             tts.synthesize(
                                 &entry.text,
                                 output_path,
@@ -272,7 +284,7 @@ impl BatchTtsUseCase {
                                 }
                                 // 记入断点续转清单
                                 {
-                                    let _g = manifest_lock.lock().unwrap();
+                                    let _g = manifest_lock.lock().unwrap_or_else(|e| e.into_inner());
                                     use std::io::Write;
                                     if let Ok(mut f) = std::fs::OpenOptions::new()
                                         .create(true)
@@ -322,7 +334,7 @@ impl BatchTtsUseCase {
                             );
                         }
 
-                        results.lock().unwrap().push(result);
+                        results.lock().unwrap_or_else(|e| e.into_inner()).push(result);
                     }
                 }));
             }

@@ -85,6 +85,7 @@ fn list_wav_files(dir: &PathBuf) -> Vec<PathBuf> {
 
 // ─── CTC 集成测试 ─────────────────────────────────
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test firered_asr_integration_test --features slow-models")]
 #[test]
 fn test_ctc_load_and_recognize_all_wavs() {
     let model_dir = ctc_model_dir();
@@ -105,7 +106,7 @@ fn test_ctc_load_and_recognize_all_wavs() {
     eprintln!("模型目录: {:?}", model_dir);
     eprintln!("找到 {} 个测试音频\n", wav_files.len());
 
-    let mut provider = votex_infra::asr::firered_asr::FireRedAsrCtcProvider::new();
+    let provider = votex_infra::asr::firered_asr::FireRedAsrCtcProvider::new();
     let model = Model::new(
         ModelId::new("firered-asr-ctc"),
         &model_dir.to_string_lossy(),
@@ -152,6 +153,7 @@ fn test_ctc_load_and_recognize_all_wavs() {
     assert!(total_chars > 0, "总识别字数应大于 0");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test firered_asr_integration_test --features slow-models")]
 #[test]
 fn test_ctc_recognize_0wav_content() {
     let model_dir = ctc_model_dir();
@@ -162,7 +164,7 @@ fn test_ctc_recognize_0wav_content() {
         return;
     }
 
-    let mut provider = votex_infra::asr::firered_asr::FireRedAsrCtcProvider::new();
+    let provider = votex_infra::asr::firered_asr::FireRedAsrCtcProvider::new();
     let model = Model::new(
         ModelId::new("firered-asr-ctc"),
         &model_dir.to_string_lossy(),
@@ -178,12 +180,16 @@ fn test_ctc_recognize_0wav_content() {
     let text = result.text.trim();
     eprintln!("CTC 0.wav 识别结果: '{}'", text);
     assert!(!text.is_empty(), "识别结果不应为空");
-    assert!(text.contains("一") || text.contains("第") || text.contains("的"),
-        "应识别出中文内容，得到: '{}'", text);
+    // 音频内容为"昨天是星期一，今天是星期二，后天是星期三"。
+    // 模型存在中英混说（code-switching）行为：可能输出"MONDAY/TODAY IS/礼拜二"等
+    // 表达（CTC 引擎还会有重复音节伪影），因此按语义断言"星期/礼拜"主题而非具体字符。
+    assert!(text.contains("星期") || text.contains("礼拜"),
+        "应识别出星期相关内容，得到: '{}'", text);
 
     provider.unload().ok();
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test firered_asr_integration_test --features slow-models")]
 #[test]
 fn test_ctc_recognize_sichuan_dialect() {
     let model_dir = ctc_model_dir();
@@ -194,7 +200,7 @@ fn test_ctc_recognize_sichuan_dialect() {
         return;
     }
 
-    let mut provider = votex_infra::asr::firered_asr::FireRedAsrCtcProvider::new();
+    let provider = votex_infra::asr::firered_asr::FireRedAsrCtcProvider::new();
     let model = Model::new(
         ModelId::new("firered-asr-ctc"),
         &model_dir.to_string_lossy(),
@@ -216,6 +222,7 @@ fn test_ctc_recognize_sichuan_dialect() {
 
 // ─── AED 集成测试 ─────────────────────────────────
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test firered_asr_integration_test --features slow-models")]
 #[test]
 fn test_aed_load_and_recognize_all_wavs() {
     let model_dir = aed_model_dir();
@@ -236,7 +243,7 @@ fn test_aed_load_and_recognize_all_wavs() {
     eprintln!("模型目录: {:?}", model_dir);
     eprintln!("找到 {} 个测试音频\n", wav_files.len());
 
-    let mut provider = votex_infra::asr::firered_asr::FireRedAsrAedProvider::new();
+    let provider = votex_infra::asr::firered_asr::FireRedAsrAedProvider::new();
     let model = Model::new(
         ModelId::new("firered-asr-aed"),
         &model_dir.to_string_lossy(),
@@ -282,6 +289,7 @@ fn test_aed_load_and_recognize_all_wavs() {
     assert!(total_chars > 0, "总识别字数应大于 0");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test firered_asr_integration_test --features slow-models")]
 #[test]
 fn test_aed_recognize_0wav_content() {
     let model_dir = aed_model_dir();
@@ -292,7 +300,7 @@ fn test_aed_recognize_0wav_content() {
         return;
     }
 
-    let mut provider = votex_infra::asr::firered_asr::FireRedAsrAedProvider::new();
+    let provider = votex_infra::asr::firered_asr::FireRedAsrAedProvider::new();
     let model = Model::new(
         ModelId::new("firered-asr-aed"),
         &model_dir.to_string_lossy(),
@@ -308,12 +316,16 @@ fn test_aed_recognize_0wav_content() {
     let text = result.text.trim();
     eprintln!("AED 0.wav 识别结果: '{}'", text);
     assert!(!text.is_empty(), "识别结果不应为空");
-    assert!(text.contains("一") || text.contains("第") || text.contains("的"),
-        "应识别出中文内容，得到: '{}'", text);
+    // 音频内容为"昨天是星期一，今天是星期二，后天是星期三"。
+    // 模型存在中英混说（code-switching）行为：可能输出"MONDAY/TODAY IS/礼拜二"等表达，
+    // 因此按语义断言"星期/礼拜"主题而非具体字符。
+    assert!(text.contains("星期") || text.contains("礼拜"),
+        "应识别出星期相关内容，得到: '{}'", text);
 
     provider.unload().ok();
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test firered_asr_integration_test --features slow-models")]
 #[test]
 fn test_aed_recognize_sichuan_dialect() {
     let model_dir = aed_model_dir();
@@ -324,7 +336,7 @@ fn test_aed_recognize_sichuan_dialect() {
         return;
     }
 
-    let mut provider = votex_infra::asr::firered_asr::FireRedAsrAedProvider::new();
+    let provider = votex_infra::asr::firered_asr::FireRedAsrAedProvider::new();
     let model = Model::new(
         ModelId::new("firered-asr-aed"),
         &model_dir.to_string_lossy(),
@@ -345,6 +357,7 @@ fn test_aed_recognize_sichuan_dialect() {
 }
 
 /// CTC vs AED 对比测试：使用同一个音频文件，对比两个引擎的识别结果
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test firered_asr_integration_test --features slow-models")]
 #[test]
 fn test_compare_ctc_vs_aed() {
     let ctc_model_dir = ctc_model_dir();
@@ -360,7 +373,7 @@ fn test_compare_ctc_vs_aed() {
     let params = make_asr_params();
 
     // CTC 识别
-    let mut ctc_provider = votex_infra::asr::firered_asr::FireRedAsrCtcProvider::new();
+    let ctc_provider = votex_infra::asr::firered_asr::FireRedAsrCtcProvider::new();
     let ctc_model = Model::new(
         ModelId::new("firered-asr-ctc"),
         &ctc_model_dir.to_string_lossy(),
@@ -374,7 +387,7 @@ fn test_compare_ctc_vs_aed() {
     let ctc_text = ctc_result.text.trim().to_string();
 
     // AED 识别
-    let mut aed_provider = votex_infra::asr::firered_asr::FireRedAsrAedProvider::new();
+    let aed_provider = votex_infra::asr::firered_asr::FireRedAsrAedProvider::new();
     let aed_model = Model::new(
         ModelId::new("firered-asr-aed"),
         &aed_model_dir.to_string_lossy(),

@@ -50,6 +50,7 @@ pub fn handle(
         asr_model,
         subtitle_format,
         None, // 无进度回调
+        None, // 无取消令牌
     )?;
 
     println!("流水线执行完成");

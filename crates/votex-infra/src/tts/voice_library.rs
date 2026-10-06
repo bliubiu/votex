@@ -4,7 +4,7 @@
 //!
 //! 目录结构（`models/voices/refs/`）：
 //! ```text
-//! {name}.wav       # 降噪后的参考音频（IndexTTS2/CosyVoice 零样本克隆输入）
+//! {name}.wav       # 降噪后的参考音频（IndexTTS-2.5/CosyVoice 零样本克隆输入）
 //! {name}.meta.json # 元数据（原始时长、降噪标记、创建时间）
 //! ```
 //!
@@ -34,10 +34,9 @@ pub struct CloneVoiceMeta {
 
 /// 音色库根目录（models/voices/refs/）
 pub fn base_dir() -> PathBuf {
-    super::indextts2::model_base_dir()
-        .parent()
-        .map(|p| p.join("voices").join("refs"))
-        .unwrap_or_else(|| PathBuf::from("models/voices/refs"))
+    crate::shared::workspace_paths::WorkspacePaths::models_dir()
+        .join("voices")
+        .join("refs")
 }
 
 /// 校验音色名（禁止路径穿越/危险字符）
@@ -59,7 +58,7 @@ fn validate_name(name: &str) -> Result<()> {
 
 /// 把参考音频入库（校验 → 可选降噪 → 存档 + 元数据）
 ///
-/// - 参考音频需为 WAV，时长 3 秒 ~ 10 分钟（IndexTTS2 推荐区间）
+/// - 参考音频需为 WAV，时长 3 秒 ~ 10 分钟（IndexTTS-2.5 建议不超过 15 秒）
 /// - `denoise = true` 时自动降噪（复用项目 denoiser，Low 档）
 /// - 已存在同名音色会报错（不静默覆盖）
 pub fn add(name: &str, ref_wav: &Path, denoise: bool) -> Result<CloneVoiceMeta> {

@@ -44,7 +44,7 @@ impl AzureSpeechTtsProvider {
         };
 
         Ok(Self {
-            engine: EngineKind::Kokoro,
+            engine: EngineKind::AzureTts,
             client: BaseApiClient::new(config),
             region,
             api_key,
@@ -73,11 +73,11 @@ impl TtsProvider for AzureSpeechTtsProvider {
         self.engine
     }
 
-    fn load(&mut self, _model: &Model) -> Result<(), TtsError> {
+    fn load(&self, _model: &Model) -> Result<(), TtsError> {
         Ok(())
     }
 
-    fn unload(&mut self) -> Result<(), TtsError> {
+    fn unload(&self) -> Result<(), TtsError> {
         Ok(())
     }
 

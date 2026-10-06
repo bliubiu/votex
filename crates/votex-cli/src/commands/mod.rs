@@ -1,3 +1,7 @@
+//! CLI 子命令实现：`clap` 子命令与领域用例的桥接层。
+//!
+//! 只做参数解析与结果格式化，业务逻辑全部下沉到 `votex-app`。
+
 pub mod root;
 pub mod model;
 pub mod tts;

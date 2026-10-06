@@ -36,6 +36,20 @@ pub fn handle(
         println!("  降噪: {:?}", dl);
     }
 
+    // Ctrl+C 令牌：置位后在下一个文件边界中断，不打断当前文件的推理
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let flag = std::sync::Arc::clone(&cancel);
+        if let Err(e) = ctrlc::set_handler(move || {
+            use std::sync::atomic::Ordering::SeqCst;
+            if !flag.swap(true, SeqCst) {
+                eprintln!("收到中断信号，正在取消（当前文件处理完成后停止）...");
+            }
+        }) {
+            tracing::warn!("注册 Ctrl+C 处理器失败: {}", e);
+        }
+    }
+
     let config = BatchAsrConfig {
         input_dir: Path::new(input_dir),
         output_dir: Path::new(output_dir),
@@ -47,6 +61,7 @@ pub fn handle(
         concurrency,
         denoise,
         denoise_level: dl,
+        cancel: Some(cancel),
     };
 
     let results = BatchAsrUseCase::execute(config)?;

@@ -84,7 +84,7 @@ fn asr_loop_verify(engine_name: &str, text: &str, audio: &votex_domain::shared::
         eprintln!("⚠ SenseVoice 模型目录不存在，跳过 ASR 闭环");
         return;
     }
-    let mut asr = votex_infra::asr::sensevoice::SenseVoiceProvider::new();
+    let asr = votex_infra::asr::sensevoice::SenseVoiceProvider::new();
     let asr_model = Model::new(
         ModelId::new("sensevoice"),
         &sensevoice_dir.to_string_lossy(),
@@ -139,6 +139,7 @@ fn asr_loop_verify(engine_name: &str, text: &str, audio: &votex_domain::shared::
 // Qwen3-TTS 0.6B（direct 布局，fp16 权重）
 // ============================================================
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test tts_e2e_multi_engine_test --features slow-models")]
 #[test]
 fn test_qwen3tts_06b_e2e_naidadawenhao() {
     let model_dir = workspace_root().join("models/tts/qwen3-tts-0.6b");
@@ -150,7 +151,7 @@ fn test_qwen3tts_06b_e2e_naidadawenhao() {
     let text = read_excerpt(150);
     eprintln!("\n########## Qwen3-TTS 0.6B e2e（《奶爸大文豪》{} 字）##########", text.chars().count());
 
-    let mut tts = votex_infra::tts::qwen3_tts::Qwen3TtsProvider::new();
+    let tts = votex_infra::tts::qwen3_tts::Qwen3TtsProvider::new();
     let model = Model::new(
         ModelId::new("qwen3-tts-0.6b"),
         "Qwen3-TTS-0.6B",
@@ -187,6 +188,7 @@ fn test_qwen3tts_06b_e2e_naidadawenhao() {
 // CosyVoice 3.0（零样本克隆，英文女声 prompt）
 // ============================================================
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test tts_e2e_multi_engine_test --features slow-models")]
 #[test]
 fn test_cosyvoice3_e2e_naidadawenhao() {
     let model_dir = workspace_root().join("models/tts/cosyvoice");
@@ -198,7 +200,7 @@ fn test_cosyvoice3_e2e_naidadawenhao() {
     let text = read_excerpt(150);
     eprintln!("\n########## CosyVoice 3.0 e2e（《奶爸大文豪》{} 字）##########", text.chars().count());
 
-    let mut tts = votex_infra::tts::cosyvoice::CosyVoiceProvider::new();
+    let tts = votex_infra::tts::cosyvoice::CosyVoiceProvider::new();
     let model = Model::new(
         ModelId::new("cosyvoice"),
         "CosyVoice-3.0",
@@ -322,6 +324,7 @@ fn bench_decode(threads: usize, past_len: usize, steps: usize) {
     );
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test tts_e2e_multi_engine_test --features slow-models")]
 #[test]
 #[ignore = "性能基准，需要本地 cosyvoice 模型"]
 fn bench_decode单步_多线程对比() {

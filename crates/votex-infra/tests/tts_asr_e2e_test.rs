@@ -26,9 +26,13 @@ fn workspace_root() -> PathBuf {
 }
 
 fn qwen3_tts_dir() -> PathBuf {
-    let mut dir = workspace_root();
-    dir.push("models/tts/qwen3-tts");
-    dir
+    // 本地模型目录为版本变体（qwen3-tts-0.6b / qwen3-tts-1.7b），优先 0.6b
+    let base = workspace_root().join("models/tts");
+    let preferred = base.join("qwen3-tts-0.6b");
+    if preferred.is_dir() {
+        return preferred;
+    }
+    base.join("qwen3-tts")
 }
 
 fn sensevoice_dir() -> PathBuf {
@@ -84,6 +88,7 @@ fn make_asr_params() -> AsrParams {
     }
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test tts_asr_e2e_test --features slow-models")]
 #[test]
 fn test_qwen3tts_to_sensevoice_pipeline() {
     // ─── 检查模型是否都存在 ─────────────────────────
@@ -107,7 +112,7 @@ fn test_qwen3tts_to_sensevoice_pipeline() {
 
     // ─── 1. Qwen3-TTS 合成语音 ───────────────────────
     eprintln!("--- Step 1: Qwen3-TTS 语音合成 ---");
-    let mut tts = votex_infra::tts::qwen3_tts::Qwen3TtsProvider::new();
+    let tts = votex_infra::tts::qwen3_tts::Qwen3TtsProvider::new();
     let tts_model = Model::new(
         ModelId::new("qwen3-tts"),
         &qwen3_tts_dir().to_string_lossy(),
@@ -146,7 +151,7 @@ fn test_qwen3tts_to_sensevoice_pipeline() {
 
     // ─── 2. SenseVoice ASR 识别 ──────────────────────
     eprintln!("--- Step 2: SenseVoice ASR 语音识别 ---");
-    let mut asr = votex_infra::asr::sensevoice::SenseVoiceProvider::new();
+    let asr = votex_infra::asr::sensevoice::SenseVoiceProvider::new();
     let asr_model = Model::new(
         ModelId::new("sensevoice"),
         &sensevoice_dir().to_string_lossy(),

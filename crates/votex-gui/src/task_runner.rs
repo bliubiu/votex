@@ -9,7 +9,8 @@ use std::sync::Arc;
 use crate::state::Page;
 use votex_domain::ocr::value_object::PageStatus;
 use votex_domain::repository::PipelineRepository;
-use votex_infra::persistence::download_repo::SqliteDownloadRepository;
+use votex_domain::model::entity::DownloadRecord;
+use votex_domain::repository::DownloadRepository;
 
 /// 后台任务事件
 #[derive(Debug, Clone)]
@@ -63,11 +64,15 @@ pub fn spawn_tts(
             return;
         }
 
-        let mut tts = votex_app::use_case::tts_use_case::TtsUseCase::new();
+        // 复用进程级单例：模型权重是 GB 级，
+        // 每个任务 new() 一次会导致连续合成时反复加载模型。
+        let tts = votex_app::services::shared_cases::shared_tts();
 
         let engine_kind = match engine.as_str() {
             "kokoro" => votex_domain::model::value_object::EngineKind::Kokoro,
-            "indextts2" => votex_domain::model::value_object::EngineKind::IndexTTS2,
+            // 迁移别名：IndexTTS2 已移除，归一到 IndexTTS25
+            "indextts2" => votex_domain::model::value_object::EngineKind::IndexTTS25,
+            "indextts25" | "indextts-2.5" => votex_domain::model::value_object::EngineKind::IndexTTS25,
             "qwen3" => votex_domain::model::value_object::EngineKind::Qwen3Tts,
             "cosyvoice3" => votex_domain::model::value_object::EngineKind::CosyVoice3,
             _ => {
@@ -155,7 +160,7 @@ pub fn spawn_asr(
             return;
         }
 
-        let mut asr = votex_app::use_case::asr_use_case::AsrUseCase::new();
+        let asr = votex_app::services::shared_cases::shared_asr();
 
         let _ = tx.send((page, TaskEvent::Progress {
             current: 0, total: 1,
@@ -168,6 +173,7 @@ pub fn spawn_asr(
             &model,
             &language,
             &format,
+            Some(cancel_token.as_ref()),
         );
 
         match result {
@@ -212,12 +218,10 @@ pub fn spawn_ocr(
             return;
         }
 
-        let mut ocr = votex_app::use_case::ocr_use_case::OcrUseCase::new();
+        let ocr = votex_app::services::shared_cases::shared_ocr();
 
         // 加载 OCR 引擎
-        let models_dir = std::env::current_dir()
-            .unwrap_or_default()
-            .join("models");
+        let models_dir = votex_app::platform::paths::models_dir();
 
         if let Err(e) = ocr.load_engine(&models_dir, &engine) {
             let _ = tx.send((page, TaskEvent::Error {
@@ -328,11 +332,9 @@ pub fn spawn_ocr_batch(
             return;
         }
 
-        let mut ocr = votex_app::use_case::ocr_use_case::OcrUseCase::new();
+        let ocr = votex_app::services::shared_cases::shared_ocr();
 
-        let models_dir = std::env::current_dir()
-            .unwrap_or_default()
-            .join("models");
+        let models_dir = votex_app::platform::paths::models_dir();
 
         if let Err(e) = ocr.load_engine(&models_dir, &engine) {
             let _ = tx.send((page, TaskEvent::Error {
@@ -421,7 +423,7 @@ pub fn spawn_model_download(
     model_id: String,
     mirror: String,
     models_dir: String,
-    download_repo: Option<Arc<SqliteDownloadRepository>>,
+    download_repo: Option<Arc<dyn DownloadRepository>>,
 ) {
     std::thread::spawn(move || {
         let page = Page::Settings;
@@ -431,12 +433,8 @@ pub fn spawn_model_download(
             message: format!("正在下载 {}...", model_id),
         }));
 
-        // 加载模型清单
-        let registry_dir = std::path::Path::new(&models_dir)
-            .parent()
-            .map_or_else(|| std::path::PathBuf::from("models/registry"), |p| p.join("models/registry"));
-        let registry = votex_infra::config::model_registry::ModelRegistryLoader::load(&registry_dir)
-            .unwrap_or_default();
+        // 加载模型清单（走统一路径解析，不依赖 cwd）
+        let registry = votex_app::platform::registry::load_registry_entries();
 
         let usecase = votex_app::use_case::model_use_case::ModelUseCase::new(
             std::path::Path::new(&models_dir),
@@ -469,10 +467,20 @@ pub fn spawn_model_download(
                     total: total as usize,
                     message: format!("{}. {}/{}", file_name, downloaded, total),
                 }));
-                // 将进度写入 SQLite 下载记录
+                // 将进度写入下载记录（首帧 upsert，其后只更新字节数）
                 if let Some(ref r) = repo_for_dl {
                     if !dl_started_clone.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                        let _ = r.upsert(&dl_model_id, file_name, "unknown", downloaded, total, "Downloading", None);
+                        let _ = r.upsert(&DownloadRecord {
+                            model_id: dl_model_id.clone(),
+                            file_name: file_name.to_string(),
+                            url: "unknown".to_string(),
+                            bytes_downloaded: downloaded,
+                            total_bytes: total,
+                            status: "Downloading".to_string(),
+                            error_message: None,
+                            created_at: "0".to_string(),
+                            updated_at: "0".to_string(),
+                        });
                     } else {
                         let _ = r.update_progress(&dl_model_id, file_name, downloaded, total);
                     }
@@ -484,11 +492,21 @@ pub fn spawn_model_download(
 
         // 标记下载完成或失败
         if let Some(ref r) = download_repo {
-            if result.is_ok() {
-                let _ = r.upsert(&model_id, "completed", "unknown", 0, 0, "Completed", None);
-            } else {
-                let _ = r.upsert(&model_id, "failed", "unknown", 0, 0, "Failed", Some(&format!("{}", result.as_ref().unwrap_err())));
-            }
+            let (file_name, status, error) = match result.as_ref() {
+                Ok(_) => ("completed", "Completed", None),
+                Err(e) => ("failed", "Failed", Some(e.to_string())),
+            };
+            let _ = r.upsert(&DownloadRecord {
+                model_id: model_id.clone(),
+                file_name: file_name.to_string(),
+                url: "unknown".to_string(),
+                bytes_downloaded: 0,
+                total_bytes: 0,
+                status: status.to_string(),
+                error_message: error,
+                created_at: "0".to_string(),
+                updated_at: "0".to_string(),
+            });
         }
 
         match result {
@@ -517,6 +535,7 @@ pub fn spawn_pipeline(
     voice: String,
     speed: f32,
     pipeline_repo: Option<Arc<dyn PipelineRepository>>,
+    cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) {
     std::thread::spawn(move || {
         let page = Page::Pipeline;
@@ -555,6 +574,7 @@ pub fn spawn_pipeline(
             "whisper-base",
             "srt",
             None,
+            cancel_token,
         );
 
         match result {
@@ -587,6 +607,7 @@ pub fn spawn_video(
     resolution: String,
     bg_images: Option<Vec<String>>,
     bg_music: Option<String>,
+    cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) {
     std::thread::spawn(move || {
         let page = Page::Video;
@@ -613,7 +634,7 @@ pub fn spawn_video(
         send_event(TaskEvent::Progress { current: 0, total: 1, message: "视频生成中...".to_string() });
 
         let usecase = votex_app::use_case::video_generate::VideoGenerateUseCase;
-        let result = usecase.execute(req, &output_path);
+        let result = usecase.execute(req, &output_path, cancel_token);
 
         match result {
             Ok(resp) => {
@@ -637,6 +658,7 @@ pub fn spawn_translate(
     source_text: String,
     engine: String,
     direction: String,
+    cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
 ) {
     std::thread::spawn(move || {
         let page = Page::Translation;
@@ -666,7 +688,7 @@ pub fn spawn_translate(
             }
         };
 
-        // 按片段汇报真实进度（长文本分段时可见）
+        // 按片段汇报真实进度（长文本分段时可见）；取消令牌在片段边界生效
         let result = use_case.pipeline().translate_with_progress(
             &source_text,
             &options,
@@ -681,6 +703,7 @@ pub fn spawn_translate(
                     },
                 }));
             },
+            cancel_token.as_deref(),
         );
 
         match result {
@@ -728,7 +751,9 @@ pub fn spawn_batch_tts(
 
         let engine_kind = match engine.as_str() {
             "kokoro" => votex_domain::model::value_object::EngineKind::Kokoro,
-            "indextts2" => votex_domain::model::value_object::EngineKind::IndexTTS2,
+            // 迁移别名：IndexTTS2 已移除，归一到 IndexTTS25
+            "indextts2" => votex_domain::model::value_object::EngineKind::IndexTTS25,
+            "indextts25" | "indextts-2.5" => votex_domain::model::value_object::EngineKind::IndexTTS25,
             "qwen3" => votex_domain::model::value_object::EngineKind::Qwen3Tts,
             "cosyvoice3" => votex_domain::model::value_object::EngineKind::CosyVoice3,
             _ => {
@@ -809,6 +834,7 @@ pub fn spawn_batch_asr(
     format: String,
     recursive: bool,
     concurrency: usize,
+    cancel_token: Arc<std::sync::atomic::AtomicBool>,
 ) {
     std::thread::spawn(move || {
         let page = Page::Batch;
@@ -833,6 +859,8 @@ pub fn spawn_batch_asr(
             concurrency,
             denoise: false,
             denoise_level: votex_domain::tts::value_object::DenoiseLevel::Low,
+            // 透传取消令牌：批量任务此前完全不可中断
+            cancel: Some(cancel_token),
         };
 
         let _ = tx.send((page, TaskEvent::Progress {

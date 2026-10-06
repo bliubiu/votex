@@ -7,6 +7,10 @@ edition.workspace = true
 default = ["ffmpeg", "directml"]
 ffmpeg = []
 directml = ["ort/directml"]
+# 门控需要真实加载 GB 级模型文件的推理测试：
+# 默认跳过（回归基线 61 秒），跑法：
+#   cargo test -p votex-infra --features slow-models
+slow-models = []
 
 [dependencies]
 votex-domain = { workspace = true }
@@ -33,10 +37,19 @@ hound = "3.5"
 which = "7"
 tempfile = "3"
 rusqlite = { version = "0.34", features = ["bundled"] }
+# 解压官方压缩包发布物（ONNX Runtime 只提供 .tgz / .zip，需提取其中的动态库）
+tar = "0.4"
+flate2 = "1.1"
+# sherpa-onnx 官方模型包为 .tar.bz2（Qwen3-ASR 等），需 bz2 解码
+bzip2 = "0.5"
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
 sherpa-onnx = "1.13"
 pinyin = { version = "0.11", features = ["with_tone_num_end"] }
 regex = { workspace = true }
+# IndexTTS-2.5 文本前端：PAT_STR 含 (?!\S) 负向前瞻，regex crate 不支持，需 fancy-regex
+fancy-regex = "0.14"
+# IndexTTS-2.5 归一化（normalizer.rs）：wetext 0.1.8 FST 引擎（OpenFST 格式读写/compose/最短路）
+rustfst = "1"
 once_cell = { workspace = true }
 rustfft = "6"
 realfft = "3"

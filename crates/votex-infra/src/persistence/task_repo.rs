@@ -20,7 +20,7 @@ impl FileTaskRepo {
 
 impl TtsTaskRepository for FileTaskRepo {
     fn find_by_id(&self, id: &TaskId) -> Option<TtsTask> {
-        self.tasks.lock().ok()?.get(id).cloned()
+        crate::persistence::guard::lock(&self.tasks).get(id).cloned()
     }
 
     fn save(&self, task: &TtsTask) -> Result<(), DomainError> {
@@ -50,5 +50,9 @@ impl TtsTaskRepository for FileTaskRepo {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn find_all(&self) -> Vec<TtsTask> {
+        crate::persistence::guard::lock(&self.tasks).values().cloned().collect()
     }
 }

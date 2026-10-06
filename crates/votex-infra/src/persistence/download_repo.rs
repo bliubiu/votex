@@ -2,31 +2,9 @@ use rusqlite::params;
 use std::sync::{Arc, Mutex};
 use votex_domain::error::DomainError;
 
-/// 下载记录
-///
-/// 追踪单个模型文件的下载进度，支持断点续传。
-/// 每个文件一条记录，由 (model_id, file_name) 唯一标识。
-#[derive(Debug, Clone)]
-pub struct DownloadRecord {
-    /// 所属模型 ID（如 "kokoro-82m"）
-    pub model_id: String,
-    /// 文件名（如 "model.onnx"）
-    pub file_name: String,
-    /// 下载源 URL
-    pub url: String,
-    /// 已下载字节数
-    pub bytes_downloaded: u64,
-    /// 文件总大小（字节），0 表示未知
-    pub total_bytes: u64,
-    /// 状态：Pending / Downloading / Paused / Completed / Failed
-    pub status: String,
-    /// 错误信息
-    pub error_message: Option<String>,
-    /// 创建时间（Unix 时间戳）
-    pub created_at: String,
-    /// 更新时间（Unix 时间戳）
-    pub updated_at: String,
-}
+// `DownloadRecord` 已提升到领域层（`votex_domain::model::entity`），
+// 本模块通过 `pub use` 保持旧引用路径可用，避免大面积改 import。
+pub use votex_domain::model::entity::DownloadRecord;
 
 /// SQLite 下载记录仓储
 ///
@@ -124,19 +102,18 @@ impl SqliteDownloadRepository {
 
     /// 按模型 ID 查找所有下载记录
     pub fn find_by_model(&self, model_id: &str) -> Vec<DownloadRecord> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
-        let mut stmt = match conn.prepare(
-            "SELECT model_id, file_name, url, bytes_downloaded, total_bytes, status,
+        let mut stmt = match conn.prepare("SELECT model_id, file_name, url, bytes_downloaded, total_bytes, status,
                     error_message, created_at, updated_at
              FROM downloads WHERE model_id = ?1
              ORDER BY file_name",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("download_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map(params![model_id], |row| {
@@ -153,28 +130,36 @@ impl SqliteDownloadRepository {
             })
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("download_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("download_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 
     /// 查找所有未完成的下载（用于启动恢复）
     pub fn find_incomplete(&self) -> Vec<DownloadRecord> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
-        let mut stmt = match conn.prepare(
-            "SELECT model_id, file_name, url, bytes_downloaded, total_bytes, status,
+        let mut stmt = match conn.prepare("SELECT model_id, file_name, url, bytes_downloaded, total_bytes, status,
                     error_message, created_at, updated_at
              FROM downloads
              WHERE status IN ('Pending', 'Downloading', 'Paused')
              ORDER BY created_at",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("download_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -191,27 +176,35 @@ impl SqliteDownloadRepository {
             })
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("download_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("download_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 
     /// 查找所有下载记录（按模型分组）
     pub fn list_all(&self) -> Vec<DownloadRecord> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
-        let mut stmt = match conn.prepare(
-            "SELECT model_id, file_name, url, bytes_downloaded, total_bytes, status,
+        let mut stmt = match conn.prepare("SELECT model_id, file_name, url, bytes_downloaded, total_bytes, status,
                     error_message, created_at, updated_at
              FROM downloads
              ORDER BY model_id, file_name",
         ) {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("download_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -228,10 +221,19 @@ impl SqliteDownloadRepository {
             })
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("download_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("download_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 
     /// 删除下载记录
@@ -282,6 +284,60 @@ impl SqliteDownloadRepository {
         .map_err(|e| DomainError::Config(crate::config_err(&format!("更新下载进度失败: {}", e))))?;
 
         Ok(())
+    }
+}
+
+/// 领域仓储 trait 实现
+///
+/// 对外只暴露 `Arc<dyn DownloadRepository>`，表现层不感知 SQLite。
+impl votex_domain::repository::DownloadRepository for SqliteDownloadRepository {
+    fn upsert(&self, record: &DownloadRecord) -> Result<(), DomainError> {
+        SqliteDownloadRepository::upsert(
+            self,
+            &record.model_id,
+            &record.file_name,
+            &record.url,
+            record.bytes_downloaded,
+            record.total_bytes,
+            &record.status,
+            record.error_message.as_deref(),
+        )
+    }
+
+    fn update_progress(
+        &self,
+        model_id: &str,
+        file_name: &str,
+        bytes_downloaded: u64,
+        total_bytes: u64,
+    ) -> Result<(), DomainError> {
+        SqliteDownloadRepository::update_progress(
+            self,
+            model_id,
+            file_name,
+            bytes_downloaded,
+            total_bytes,
+        )
+    }
+
+    fn find_by_model(&self, model_id: &str) -> Vec<DownloadRecord> {
+        SqliteDownloadRepository::find_by_model(self, model_id)
+    }
+
+    fn find_incomplete(&self) -> Vec<DownloadRecord> {
+        SqliteDownloadRepository::find_incomplete(self)
+    }
+
+    fn list_all(&self) -> Vec<DownloadRecord> {
+        SqliteDownloadRepository::list_all(self)
+    }
+
+    fn delete(&self, model_id: &str, file_name: &str) -> Result<(), DomainError> {
+        SqliteDownloadRepository::delete(self, model_id, file_name)
+    }
+
+    fn delete_by_model(&self, model_id: &str) -> Result<(), DomainError> {
+        SqliteDownloadRepository::delete_by_model(self, model_id)
     }
 }
 

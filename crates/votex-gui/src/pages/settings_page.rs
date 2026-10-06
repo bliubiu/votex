@@ -15,6 +15,20 @@ impl SettingsPage {
         PageLayout::header(ui, "系统设置", "管理模型、API Key 和系统配置");
         ui.add_space(4.0);
 
+        // ======== 模型删除二次确认弹窗 ========
+        // AGENTS.md 硬约束：禁止自动删除模型文件，必须二次确认操作
+        Self::show_delete_confirmation(ui, state);
+
+        // ======== 配置保存结果提示 ========
+        if let Some(msg) = state.settings.config_message.clone() {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(&msg).size(12.0).color(colors::STONE_GRAY));
+                if ui.small_button("关闭").clicked() {
+                    state.settings.config_message = None;
+                }
+            });
+        }
+
         // ======== 基础配置 ========
         PageLayout::card(ui, Some("基础配置"), |ui| {
             PageLayout::param_grid(ui, |ui| {
@@ -278,16 +292,10 @@ impl SettingsPage {
                                             }
                                         } else if model.status.contains("就绪") {
                                             if ui.small_button("删除").clicked() {
-                                                let models_dir = if state.settings.models_dir.is_empty() {
-                                                    model_detector::default_models_dir()
-                                                } else {
-                                                    Path::new(&state.settings.models_dir).to_path_buf()
-                                                };
-                                                let model_dir = models_dir.join(&model.id);
-                                                if model_dir.exists() {
-                                                    let _ = std::fs::remove_dir_all(&model_dir);
-                                                }
-                                                model.status = "未下载".to_string();
+                                                // AGENTS.md：禁止自动删除模型文件，必须二次确认。
+                                                // 这里只登记待删除项，真实删除在确认弹窗中完成
+                                                state.settings.pending_delete = Some(model.id.clone());
+                                                state.settings.delete_result = None;
                                             }
                                         }
                                     });
@@ -299,8 +307,116 @@ impl SettingsPage {
         });
     }
 
-    fn save_config(state: &AppState) {
-        let config_path = Path::new("application.yml");
+    /// 渲染模型删除二次确认弹窗
+    ///
+    /// AGENTS.md 硬约束「禁止自动删除模型文件，必须二次确认操作」。
+    /// 弹窗显式展示待删除目录完整路径，用户点击「确认删除」后才真正执行；
+    /// 删除失败必须给出提示，不允许静默吞错。
+    fn show_delete_confirmation(ui: &mut egui::Ui, state: &mut AppState) {
+        let Some(model_id) = state.settings.pending_delete.clone() else {
+            return;
+        };
+
+        let models_dir = if state.settings.models_dir.is_empty() {
+            model_detector::default_models_dir()
+        } else {
+            Path::new(&state.settings.models_dir).to_path_buf()
+        };
+        let model_dir = models_dir.join(&model_id);
+        let dir_exists = model_dir.exists();
+
+        let mut open = true;
+        egui::Window::new("确认删除模型")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                ui.label(
+                    egui::RichText::new("此操作将永久删除该模型的全部文件，且无法撤销。").strong(),
+                );
+                ui.add_space(8.0);
+                ui.label(format!("模型 ID：{}", model_id));
+                ui.label(format!("目录：{}", model_dir.display()));
+                if !dir_exists {
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("提示：该目录当前不存在，确认后仅更新状态。")
+                            .size(12.0)
+                            .color(colors::STONE_GRAY),
+                    );
+                }
+                ui.add_space(12.0);
+
+                ui.horizontal(|ui| {
+                    if ui.button("确认删除").clicked() {
+                        let result = Self::delete_model_dir(&model_dir);
+                        match &result {
+                            Ok(()) => {
+                                // 同步刷新列表中的模型状态
+                                if let Some(item) = state
+                                    .settings
+                                    .model_list
+                                    .iter_mut()
+                                    .find(|m| m.id == model_id)
+                                {
+                                    item.status = "未下载".to_string();
+                                }
+                                state.settings.delete_result =
+                                    Some(format!("模型已删除：{}", model_id));
+                            }
+                            Err(e) => {
+                                state.settings.delete_result = Some(format!("删除失败：{}", e));
+                            }
+                        }
+                        state.settings.pending_delete = None;
+                    }
+                    if ui.button("取消").clicked() {
+                        state.settings.pending_delete = None;
+                    }
+                });
+            });
+
+        // 用户通过窗口右上角关闭按钮关闭弹窗时同样取消待删除状态
+        if !open {
+            state.settings.pending_delete = None;
+        }
+
+        // 展示上一次删除操作的结果
+        if let Some(msg) = state.settings.delete_result.clone() {
+            egui::Window::new("删除结果")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 80.0])
+                .show(ui.ctx(), |ui| {
+                    ui.label(&msg);
+                    if ui.button("确定").clicked() {
+                        state.settings.delete_result = None;
+                    }
+                });
+        }
+    }
+
+    /// 实际执行模型目录删除（仅在用户二次确认后调用）
+    fn delete_model_dir(model_dir: &Path) -> Result<(), String> {
+        if !model_dir.exists() {
+            return Ok(());
+        }
+        std::fs::remove_dir_all(model_dir)
+            .map_err(|e| format!("{}（{}）", model_dir.display(), e))
+    }
+
+    /// 保存配置
+    ///
+    /// 关键修复：以磁盘上已有的配置为基线做**增量覆盖**，只改本页管理的字段。
+    /// 旧实现用 `AppConfig { ..Default::default() }` 整体重建，会把本页未涉及的
+    /// tts / asr / translation / output / ui / task / pipeline / resource 八段
+    /// 配置静默重置为默认值；同时旧实现还把 `execution_provider` 硬编码为 "auto"，
+    /// 会覆盖用户为规避 DirectML 崩溃而特意设置的 "cpu"。
+    fn save_config(state: &mut AppState) {
+        // 配置文件路径由 bootstrap 传入：双击启动时 cwd 任意，
+        // 写死相对路径会把配置写到错误目录
+        let config_path = Path::new(&state.config_path);
         let priority = if state.settings.mirror == "cn" {
             vec!["modelscope".into(), "hf-mirror".into(), "gitee".into()]
         } else {
@@ -310,9 +426,15 @@ impl SettingsPage {
         let infer_cpu_threads = state.settings.cpu_threads;
         let infer_memory_limit = state.settings.memory_limit_mb;
         let infer_exec_mode = state.settings.execution_mode.clone();
+        let log_level = state.settings.log_level.clone();
+        let models_dir = if state.settings.models_dir.is_empty() {
+            "models".to_string()
+        } else {
+            state.settings.models_dir.clone()
+        };
 
         // 同时更新全局运行时推理配置
-        votex_infra::shared::OrtSessionFactory::update_global_config(|cfg| {
+        votex_app::platform::runtime::update_inference_config(|cfg| {
             cfg.num_threads = infer_cpu_threads;
             cfg.inter_threads = 0;
             cfg.memory_limit_mb = infer_memory_limit;
@@ -320,42 +442,30 @@ impl SettingsPage {
             cfg.enable_memory_pattern = infer_memory_limit == 0;
         });
 
-        let config = votex_domain::config::value_object::AppConfig {
-            models: votex_domain::config::value_object::ModelsConfig {
-                storage_path: if state.settings.models_dir.is_empty() {
-                    "models".to_string()
-                } else {
-                    state.settings.models_dir.clone()
-                },
-                registry_path: None,
-                download: votex_domain::config::value_object::DownloadConfig {
-                    priority,
-                    ..Default::default()
-                },
-            },
-            log: votex_domain::config::value_object::LogConfig {
-                level: state.settings.log_level.clone(),
-                ..Default::default()
-            },
-            inference: votex_domain::config::value_object::InferenceConfig {
-                num_threads: infer_cpu_threads,
-                inter_threads: 0,
-                quantization: "none".to_string(),
-                kv_cache: true,
-                execution_provider: "auto".to_string(),
-                memory_limit_mb: infer_memory_limit,
-                enable_memory_pattern: infer_memory_limit == 0,
-                execution_mode: infer_exec_mode,
-            },
-            ..Default::default()
-        };
+        // 以已有配置为基线；文件不存在或不可解析时才退回默认配置
+        let mut config = votex_app::platform::config::load_config_or_default(config_path);
 
-        match votex_infra::config::loader::ConfigLoader::save_to_file(&config, config_path) {
+        // 只覆盖本页管理的字段，其余段落原样保留
+        config.models.storage_path = models_dir;
+        config.models.download.priority = priority;
+        config.log.level = log_level;
+        config.inference.num_threads = infer_cpu_threads;
+        config.inference.inter_threads = 0;
+        config.inference.quantization = "none".to_string();
+        config.inference.kv_cache = true;
+        // execution_provider 不由本页管理，保留用户原值（避免覆盖为 auto 触发 DirectML 崩溃风险）
+        config.inference.memory_limit_mb = infer_memory_limit;
+        config.inference.enable_memory_pattern = infer_memory_limit == 0;
+        config.inference.execution_mode = infer_exec_mode;
+
+        match votex_app::platform::config::save_config(&config, config_path) {
             Ok(()) => {
                 tracing::info!("配置已保存，推理资源限制已更新");
+                state.settings.config_message = Some("配置已保存".to_string());
             }
             Err(e) => {
                 tracing::error!("保存配置失败: {}", e);
+                state.settings.config_message = Some(format!("保存配置失败：{}", e));
             }
         }
     }

@@ -41,7 +41,7 @@ impl AzureSpeechAsrProvider {
         };
 
         Ok(Self {
-            engine: EngineKind::SenseVoice,
+            engine: EngineKind::AzureAsr,
             client: BaseApiClient::new(config),
             region,
             api_key,
@@ -54,12 +54,12 @@ impl AsrProvider for AzureSpeechAsrProvider {
         self.engine
     }
 
-    fn load(&mut self, _model: &Model) -> Result<(), AsrError> {
+    fn load(&self, _model: &Model) -> Result<(), AsrError> {
         // Azure Speech 为在线 API，无需加载模型
         Ok(())
     }
 
-    fn unload(&mut self) -> Result<(), AsrError> {
+    fn unload(&self) -> Result<(), AsrError> {
         Ok(())
     }
 

@@ -7,7 +7,7 @@ use crate::widgets::audio_player::AudioPlayer;
 use crate::pages::page_template::PageLayout;
 use crate::theme::colors;
 
-use votex_infra::tts::qwen3_model_selector;
+use votex_app::platform::tts::qwen3_model_selector;
 
 /// TTS 语音合成页面
 pub struct TtsPage;
@@ -25,7 +25,7 @@ impl TtsPage {
                         .add_filter("文本文件", &["txt", "md", "srt", "lrc", "json"])
                         .pick_file()
                     {
-                        match votex_infra::encoding::detector::EncodingDetector::read_text_file(&path) {
+                        match votex_app::platform::text::read_text_file(&path) {
                             Ok(content) => {
                                 state.tts.input_text = content;
                                 state.tts.result_message = format!("已加载文件: {}", path.display());
@@ -53,7 +53,7 @@ impl TtsPage {
                         .selected_text(&state.tts.engine)
                         .show_ui(ui, |ui| {
                             if ui.selectable_value(&mut state.tts.engine, "kokoro".to_string(), "Kokoro-82M").changed() { changed = true; }
-                            if ui.selectable_value(&mut state.tts.engine, "indextts2".to_string(), "IndexTTS2").changed() { changed = true; }
+                            if ui.selectable_value(&mut state.tts.engine, "indextts25".to_string(), "IndexTTS-2.5（粤语）").changed() { changed = true; }
                             if ui.selectable_value(&mut state.tts.engine, "qwen3".to_string(), "Qwen3-TTS").changed() { changed = true; }
                             if ui.selectable_value(&mut state.tts.engine, "cosyvoice3".to_string(), "CosyVoice3").changed() { changed = true; }
                         });
@@ -72,12 +72,27 @@ impl TtsPage {
                 ui.end_row();
 
                 ui.label("语言/方言:");
+                // 语言选项随引擎联动：目前仅 IndexTTS-2.5 原生支持粤语（<|yue|> token），
+                // CosyVoice3 官方支持粤语（口音主要靠参考音频克隆）；其余引擎仅普通话。
+                // 闽南语当前无引擎原生支持，不提供选项。
+                let yue_supported = matches!(state.tts.engine.as_str(), "indextts25" | "cosyvoice3");
+                if !yue_supported && state.tts.language == "yue" {
+                    state.tts.language = "zh".to_string();
+                }
+                if state.tts.language == "nan" {
+                    state.tts.language = "zh".to_string();
+                }
+                let lang_display = match state.tts.language.as_str() {
+                    "yue" => "粤语".to_string(),
+                    _ => "普通话".to_string(),
+                };
                 egui::ComboBox::from_id_salt("tts_language")
-                    .selected_text(&state.tts.language)
+                    .selected_text(lang_display)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut state.tts.language, "zh".to_string(), "普通话");
-                        ui.selectable_value(&mut state.tts.language, "yue".to_string(), "粤语");
-                        ui.selectable_value(&mut state.tts.language, "nan".to_string(), "闽南语");
+                        if yue_supported {
+                            ui.selectable_value(&mut state.tts.language, "yue".to_string(), "粤语");
+                        }
                     });
                 ui.end_row();
 
@@ -186,7 +201,9 @@ impl TtsPage {
                         if let Some(ref token) = state.tts.cancel_token {
                             token.store(true, std::sync::atomic::Ordering::SeqCst);
                         }
-                        state.tts.is_running = false;
+                        // 不在此处置 is_running = false：后台线程仍在跑，
+                        // 下一个 Progress 事件会把「正在取消...」覆盖回「识别中 3/10」，
+                        // UI 闪回且用户误以为没取消。终态由后台 Success/Error 事件统一复位。
                         state.tts.progress_text = "正在取消...".to_string();
                     }
                 }
@@ -221,9 +238,7 @@ impl TtsPage {
 
         // ======== Qwen3 模型变体选择弹窗 ========
         if state.tts.show_qwen3_selector {
-            let models_base = std::env::current_dir()
-                .unwrap_or_default()
-                .join("models");
+            let models_base = votex_app::platform::paths::models_dir();
             let conditions = qwen3_model_selector::detect_device(&models_base);
             let recommendation = qwen3_model_selector::recommend(&conditions);
 

@@ -12,8 +12,7 @@ use votex_domain::tts::service::TextSegmenter;
 use votex_domain::tts::value_object::{parse_tts_engine, AudioFormat, TTS_ENGINE_HINT};
 use votex_infra::audio::wav::WavWriter;
 
-use crate::use_case::asr_use_case::AsrUseCase;
-use crate::use_case::tts_use_case::{build_synthesis_plan, write_chapters_json, ChapterTiming, TtsUseCase};
+use crate::use_case::tts_use_case::{build_synthesis_plan, write_chapters_json, ChapterTiming};
 
 /// 段间静音毫秒（拼接时插在相邻两段之间，章节起点计算依赖此值）
 const SEGMENT_PAUSE_MS: u32 = 300;
@@ -86,6 +85,8 @@ pub struct PipelineContext {
     pub asr_model: String,
     /// 字幕格式
     pub subtitle_format: String,
+    /// 取消令牌：置 true 后在各阶段边界与逐段循环中中断
+    pub cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// 阶段执行函数
@@ -157,10 +158,11 @@ impl PipelineUseCase {
         asr_model: &str,
         subtitle_format: &str,
         progress: Option<Box<dyn Fn(ProgressEvent) + Send>>,
+        cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<()> {
         std::fs::create_dir_all(output_dir)?;
 
-        // docs/20 F62：此前这里只映射 kokoro/indextts2，导致 `--engine cosyvoice3`
+        // docs/20 F62：此前这里只映射 kokoro/indextts2（旧引擎），导致 `--engine cosyvoice3`
         // 与 `--engine qwen3` 直接 `不支持的 TTS 引擎`；现统一走 domain 的
         // `parse_tts_engine`，新增 TTS 引擎只需改那一处。
         //
@@ -229,6 +231,7 @@ impl PipelineUseCase {
             speed,
             asr_model: asr_model.to_string(),
             subtitle_format: subtitle_format.to_string(),
+            cancel,
         };
 
         tracing::info!("流水线启动: {:?}, 阶段数: {}", kind, pipeline.stages.len());
@@ -249,6 +252,12 @@ impl PipelineUseCase {
         // 配置驱动：通过 stage_registry 查找并执行对应阶段的处理函数
         let mut failed_stage: Option<(usize, String)> = None;
         for stage_idx in 0..stage_count {
+            // 阶段边界取消检查
+            if let Some(ref token) = ctx.cancel {
+                if token.load(std::sync::atomic::Ordering::SeqCst) {
+                    anyhow::bail!("任务已取消（已完成 {}/{} 阶段）", stage_idx, stage_count);
+                }
+            }
             stage_statuses[stage_idx] = StageStatus::Running;
             pipeline.status = PipelineStatus::Running(stage_idx);
             self.save_pipeline(&pipeline);
@@ -351,12 +360,18 @@ impl PipelineUseCase {
             return Ok(());
         }
 
-        let mut tts = TtsUseCase::new();
+        let tts = crate::services::shared_cases::shared_tts();
         let total = ctx.segments.len();
         let seg_dir = ctx.output_dir.join("segments");
         std::fs::create_dir_all(&seg_dir)?;
 
         for (i, seg_text) in ctx.segments.iter().enumerate() {
+            // 段边界取消检查
+            if let Some(ref token) = ctx.cancel {
+                if token.load(std::sync::atomic::Ordering::SeqCst) {
+                    anyhow::bail!("任务已取消（已合成 {}/{} 段）", i, total);
+                }
+            }
             tracing::info!("  合成第 {}/{} 段 ({} 字)", i + 1, total, seg_text.len());
 
             let seg_path = seg_dir.join(format!("seg_{:04}.wav", i));
@@ -525,8 +540,15 @@ impl PipelineUseCase {
         };
         let subtitle_path = ctx.output_dir.join(format!("{}.{}", ctx.base_name, subtitle_ext));
 
-        let mut asr = AsrUseCase::new();
-        asr.recognize(&audio_path, &subtitle_path, &ctx.asr_model, "zh", &ctx.subtitle_format)?;
+        let asr = crate::services::shared_cases::shared_asr();
+        asr.recognize(
+            &audio_path,
+            &subtitle_path,
+            &ctx.asr_model,
+            "zh",
+            &ctx.subtitle_format,
+            ctx.cancel.as_deref(),
+        )?;
 
         ctx.subtitle_path = Some(subtitle_path);
         tracing::info!("  字幕输出完成");
@@ -592,6 +614,7 @@ mod audio_extract_tests {
             speed: 1.0,
             asr_model: "sensevoice".to_string(),
             subtitle_format: "srt".to_string(),
+            cancel: None,
         }
     }
 
@@ -757,6 +780,7 @@ mod chapter_tests {
             speed: 1.0,
             asr_model: "sensevoice".to_string(),
             subtitle_format: "srt".to_string(),
+            cancel: None,
         };
 
         PipelineUseCase::run_audio_concat(&mut ctx, &|_| {}).expect("拼接应成功");

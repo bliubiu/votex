@@ -17,6 +17,7 @@ use std::path::Path;
 use image::DynamicImage;
 use ndarray::Array4;
 use ort::session::Session;
+use std::sync::Arc;
 
 use votex_domain::error::OcrError;
 use votex_domain::model::entity::Model;
@@ -31,7 +32,11 @@ use crate::shared::{EngineState, ModelFileLocator, OrtSessionFactory};
 pub struct EasyOcrProvider {
     det_state: EngineState<Session>,
     rec_state: EngineState<Session>,
-    char_dict: Vec<String>,
+    /// 识别字典（字符表）
+    ///
+    /// 用 `Arc<[String]>` 而非 `Vec<String>`：识别路径按 token 下标取字符，
+    /// 包在 `Arc` 里可让 `&str` 借用跨闭包存活，无需逐次加锁。
+    char_dict: EngineState<Arc<[String]>>,
 }
 
 impl EasyOcrProvider {
@@ -39,12 +44,12 @@ impl EasyOcrProvider {
         Self {
             det_state: EngineState::new(),
             rec_state: EngineState::new(),
-            char_dict: Vec::new(),
+            char_dict: EngineState::new(),
         }
     }
 
     /// 从模型目录加载
-    pub fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), OcrError> {
+    pub fn load_from_dir(&self, model_dir: &Path) -> Result<(), OcrError> {
         let det_path = ModelFileLocator::find_auxiliary_file(model_dir, "craft_det.onnx")
             .map_err(|e| OcrError::LoadFailed(format!("{}", e)))?;
         let rec_path = ModelFileLocator::find_auxiliary_file(model_dir, "recognizer.onnx")
@@ -62,11 +67,12 @@ impl EasyOcrProvider {
 
         let dict_content = std::fs::read_to_string(&dict_path)
             .map_err(|e| OcrError::LoadFailed(format!("读取字典文件失败: {}", e)))?;
-        self.char_dict = dict_content.lines().map(|l| l.to_string()).collect();
+        let dict: Vec<String> = dict_content.lines().map(|l| l.to_string()).collect();
+        self.char_dict.load(Arc::from(dict));
 
         tracing::info!(
             "EasyOCR 模型加载完成（det+rec），字典条目数: {}",
-            self.char_dict.len()
+            self.char_dict.with(|d| d.len()).unwrap_or(0)
         );
         Ok(())
     }
@@ -297,8 +303,10 @@ impl EasyOcrProvider {
 
             // 跳过空白符（0）和重复字符
             if max_idx != 0 && max_idx != last_idx {
-                if max_idx - 1 < self.char_dict.len() {
-                    text.push_str(&self.char_dict[max_idx - 1]);
+                let dict_guard = self.char_dict.get();
+                let dict_ref = dict_guard.as_ref().and_then(|d| d.as_ref());
+                if max_idx >= 1 && (max_idx as usize - 1) < dict_ref.map_or(0, |d| d.len()) {
+                    text.push_str(&dict_ref.expect("上一步已确认长度")[max_idx as usize - 1]);
                     total_conf += max_val;
                     char_count += 1;
                 }
@@ -318,7 +326,7 @@ impl EasyOcrProvider {
     /// 识别图片中的文字（含取消和进度回调）
     #[allow(unused_variables)]
     pub fn recognize_with_cancel(
-        &mut self,
+        &self,
         image_path: &Path,
         params: &OcrParams,
         cancel_token: &CancellationToken,
@@ -397,32 +405,34 @@ impl OcrProvider for EasyOcrProvider {
         EngineKind::EasyOcr
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), OcrError> {
+    fn load(&self, model: &Model) -> Result<(), OcrError> {
         let model_dir = ModelFileLocator::locate_model_dir(model)
             .map_err(|e| OcrError::LoadFailed(format!("{}", e)))?;
         self.load_from_dir(&model_dir)
     }
 
-    fn unload(&mut self) -> Result<(), OcrError> {
+    fn unload(&self) -> Result<(), OcrError> {
         self.det_state.unload();
         self.rec_state.unload();
-        self.char_dict.clear();
+        self.char_dict.unload();
         tracing::info!("EasyOCR 引擎已释放");
         Ok(())
     }
 
     fn recognize_with_cancel(
-        &mut self,
+        &self,
         image_path: &Path,
         params: &OcrParams,
         cancel_token: &CancellationToken,
         on_progress: ProgressCallback,
     ) -> Result<OcrResult, OcrError> {
-        self.recognize_with_cancel(image_path, params, cancel_token, on_progress)
+        // 必须用完全限定名调用 inherent 方法。
+        // 裸写 `self.recognize_with_cancel(..)` 会解析回本 trait 方法 → 无限递归 → 栈溢出。
+        EasyOcrProvider::recognize_with_cancel(self, image_path, params, cancel_token, on_progress)
     }
 
     fn recognize(
-        &mut self,
+        &self,
         image_path: &Path,
         _params: &OcrParams,
     ) -> Result<OcrResult, OcrError> {

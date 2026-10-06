@@ -89,14 +89,14 @@ impl ResourceMonitor {
 
     /// 设置压力阈值（已用百分比）
     pub fn set_thresholds(&self, yellow_pct: f32, red_pct: f32) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         g.thresholds = (yellow_pct.clamp(10.0, 99.0), red_pct.clamp(20.0, 100.0));
         g.last_sample = None; // 阈值变化后强制重采样
     }
 
     /// 采样当前资源状态（内部节流，500ms 内复用上次结果）
     pub fn snapshot(&self) -> (ResourceSnapshot, MemoryPressure) {
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((at, snap, pressure)) = &g.last_sample {
             if at.elapsed() < g.min_interval {
                 return (snap.clone(), *pressure);

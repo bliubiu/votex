@@ -25,11 +25,19 @@ const CHUNK_CONTENT_LEN: usize = MAX_SEQ_LEN - 2;
 // ===================== 词汇表（静态嵌入） =====================
 
 /// 解析 config.json 中的 vocab 字段
-fn parse_vocab_json(json_str: &str) -> HashMap<char, i64> {
-    let cfg: serde_json::Value = serde_json::from_str(json_str)
-        .expect("config.json 格式无效");
-    let vocab = cfg["vocab"].as_object()
-        .expect("config.json 缺少 vocab 字段");
+///
+/// 返回 `Result` 而非 `expect`：该 JSON 来自磁盘上的模型目录，
+/// 可能因下载中断、镜像源投毒或人工编辑而损坏。旧实现在此处 `expect`，
+/// 一旦解析失败会直接 panic（在 GUI 中表现为进程崩溃），
+/// 与读取文件失败时的"告警 + 降级"处理策略也不一致。
+fn parse_vocab_json(json_str: &str) -> Result<HashMap<char, i64>, String> {
+    let cfg: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|e| format!("config.json 格式无效: {}", e))?;
+    let vocab = cfg
+        .get("vocab")
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| "config.json 缺少 vocab 字段或该字段不是对象".to_string())?;
+
     let mut map = HashMap::with_capacity(vocab.len());
     for (ch, id) in vocab {
         let chars: Vec<char> = ch.chars().collect();
@@ -37,14 +45,20 @@ fn parse_vocab_json(json_str: &str) -> HashMap<char, i64> {
             map.insert(chars[0], id.as_i64().unwrap_or(0));
         }
     }
-    map
+    Ok(map)
 }
 
 /// 从模型目录加载词汇表 JSON（不再使用硬编码的静态全局变量）
 fn load_vocab_for_model(base_dir: &Path) -> HashMap<char, i64> {
     let config_path = base_dir.join("config.json");
     match std::fs::read_to_string(&config_path) {
-        Ok(content) => parse_vocab_json(&content),
+        Ok(content) => match parse_vocab_json(&content) {
+            Ok(map) => map,
+            Err(e) => {
+                tracing::warn!("解析词汇表失败 ({}): {}", config_path.display(), e);
+                HashMap::new()
+            }
+        },
         Err(e) => {
             tracing::warn!("加载词汇表失败 ({}): {}", config_path.display(), e);
             HashMap::new()
@@ -285,7 +299,7 @@ impl TtsProvider for KokoroProvider {
         EngineKind::Kokoro
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), TtsError> {
+    fn load(&self, model: &Model) -> Result<(), TtsError> {
         let config = resolve_model_config(model)?;
 
         // 查找 ONNX 模型文件：按模型版本分组探测，优先匹配当前模型的权重。
@@ -349,7 +363,7 @@ impl TtsProvider for KokoroProvider {
         Ok(())
     }
 
-    fn unload(&mut self) -> Result<(), TtsError> {
+    fn unload(&self) -> Result<(), TtsError> {
         self.state.unload();
         *self.config.lock().unwrap_or_else(|e| e.into_inner()) = None;
         self.voice_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
@@ -775,9 +789,24 @@ mod tests {
 
     #[test]
     fn test_resolve_model_config_without_filepath() {
-        let model = make_test_model("kokoro-82m-v1.1-zh", "Kokoro-82M-v1.1-zh", None);
+        // id 与 name 都用确定不存在的值。
+        //
+        // `resolve_model_config` 先按 name 前缀识别引擎（Kokoro / Kokoro-Zen），
+        // 识别失败直接返回「不支持的模型」，不会走到目录查找这一步。
+        // 因此本用例锁定的是「未知模型名必须被快速拒绝」这一行为：
+        // 早期实现会拿真实模型名做输入，一旦本机已下载该模型，
+        // `ModelFileLocator` 就能解析出目录，断言 Err 反而失败 —— 典型环境依赖。
+        let model = make_test_model(
+            "kokoro-nonexistent-for-unit-test",
+            "kokoro-nonexistent-for-unit-test",
+            None,
+        );
         let err = resolve_model_config(&model).unwrap_err();
-        assert!(err.to_string().contains("file_paths"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("不支持的 Kokoro 模型") || msg.contains("无法定位模型目录"),
+            "未知模型应被明确拒绝，实际错误: {msg}"
+        );
     }
 
     #[test]

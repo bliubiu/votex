@@ -1,21 +1,33 @@
-//! Qwen3-ASR 引擎（ONNX 推理）
+//! Qwen3-ASR 引擎实现（sherpa-onnx 绑定）
 //!
-//! Qwen3-ASR 是通义千问系列的多模态语音理解模型，
-//! 在 Qwen2-Audio 基础上进一步优化，支持语音转文本、语音情感识别。
+//! 通过 sherpa-onnx Rust 绑定加载 [Wasser1462/Qwen3-ASR-onnx] 导出的
+//! 分图 ONNX（conv_frontend / encoder / decoder + tokenizer 目录），
+//! 不再依赖自研 ort 单模型推理（旧实现为无效 stub，已废弃）。
 //!
-//! # 模型文件
-//! - `models/Qwen3-ASR/model.onnx` - ONNX 模型文件
-//! - `models/Qwen3-ASR/tokenizer.json` - Tokenizer 文件
-//! - `models/Qwen3-ASR/config.json` - 模型配置
+//! # 模型文件结构（sherpa-onnx 官方预转换包）
+//!
+//! ```text
+//! models/asr/qwen3-asr/
+//! ├── conv_frontend.onnx   # 卷积前端（fbank 特征）
+//! ├── encoder.int8.onnx    # 编码器（int8 量化）
+//! ├── decoder.int8.onnx    # LLM 解码器（int8 量化）
+//! └── tokenizer/           # HF tokenizer 目录（vocab.json/merges.txt/tokenizer_config.json）
+//! ```
+//!
+//! # 能力
+//!
+//! Qwen3-ASR-0.6B 支持 29 种语言（中文/英语/粤语/日语/韩语…）+ 22 种中国方言
+//! （粤语（广东/香港口音）、吴语、闽南语…），并支持歌词/说唱识别。
 //!
 //! # 集成状态
-//! 【已完成】ONNX 推理管线集成
+//! 【已完成】sherpa-onnx 绑定推理管线（与 firered_asr.rs 同范式）
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-use ndarray::Array3;
-use ort::session::Session;
-
+use sherpa_onnx::{
+    OfflineQwen3ASRModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
+};
 use votex_domain::asr::provider::AsrProvider;
 use votex_domain::asr::value_object::{AsrParams, RecognizeOutput, WordTimestamp};
 use votex_domain::error::AsrError;
@@ -23,90 +35,109 @@ use votex_domain::model::entity::Model;
 use votex_domain::model::value_object::EngineKind;
 use votex_domain::shared::value_object::AudioData;
 
-use crate::shared::{EngineState, ModelFileLocator, OrtSessionFactory};
-
-/// Qwen3-ASR Provider（ONNX 推理）
+/// Qwen3-ASR Provider（sherpa-onnx 分图 ONNX 推理）
 pub struct Qwen3AsrProvider {
-    state: EngineState<Session>,
-    tokenizer: Option<tokenizers::Tokenizer>,
+    recognizer: Mutex<Option<OfflineRecognizer>>,
+    sample_rate: u32,
 }
 
 impl Qwen3AsrProvider {
     pub fn new() -> Self {
         Self {
-            state: EngineState::new(),
-            tokenizer: None,
+            recognizer: Mutex::new(None),
+            sample_rate: 16000,
         }
     }
 
-    /// 从模型目录加载
-    fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), AsrError> {
-        // F53：候选名覆盖官方 ONNX 导出的常见命名
-        let model_path =
-            ModelFileLocator::find_first_existing(model_dir, &["model.onnx", "model_int8.onnx"])
-                .map_err(|e| {
-                    AsrError::ModelNotFound(format!(
-                        "{}\n注意：Qwen3-ASR 需 ONNX 权重，若目录内只有 model.safetensors，\
-                         说明该模型尚未转换为 ONNX 格式，请先执行转换后再加载。",
-                        e
-                    ))
-                })?;
-        let tokenizer_path = ModelFileLocator::find_first_existing(
+    /// 从模型目录加载（三 ONNX + tokenizer 目录）
+    fn load_from_dir(&self, model_dir: &Path) -> Result<(), AsrError> {
+        let conv_frontend = Self::find_file(model_dir, &["conv_frontend.onnx"])?;
+        let encoder = Self::find_file(
             model_dir,
-            &["tokenizer.json", "vocab.json"],
-        )
-        .map_err(|e| AsrError::ModelNotFound(format!("{}", e)))?;
+            &["encoder.int8.onnx", "encoder.onnx"],
+        )?;
+        let decoder = Self::find_file(
+            model_dir,
+            &["decoder.int8.onnx", "decoder.onnx"],
+        )?;
+        let tokenizer_dir = model_dir.join("tokenizer");
+        if !tokenizer_dir.is_dir() {
+            return Err(AsrError::ModelNotFound(format!(
+                "Qwen3-ASR tokenizer 目录不存在: {:?}（sherpa-onnx 分图包必须包含 tokenizer/ 子目录）",
+                tokenizer_dir
+            )));
+        }
 
-        // 使用 OrtSessionFactory 创建 Session
-        let session = OrtSessionFactory::create(&model_path)
-            .map_err(|e| AsrError::LoadFailed(format!("{}", e)))?;
-        self.state.load(session);
+        tracing::info!(
+            "加载 Qwen3-ASR 分图 ONNX 模型: {:?}（encoder: {:?}）",
+            model_dir,
+            encoder
+        );
 
-        // 加载 Tokenizer
-        let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| AsrError::LoadFailed(format!("加载 Tokenizer 失败: {}", e)))?;
-        self.tokenizer = Some(tokenizer);
+        let mut config = OfflineRecognizerConfig::default();
+        config.model_config.qwen3_asr = OfflineQwen3ASRModelConfig {
+            conv_frontend: Some(conv_frontend.to_string_lossy().to_string()),
+            encoder: Some(encoder.to_string_lossy().to_string()),
+            decoder: Some(decoder.to_string_lossy().to_string()),
+            tokenizer: Some(tokenizer_dir.to_string_lossy().to_string()),
+            // 解码参数保持 crate Default（temperature≈0 贪心、top_p=0.8、seed=42）
+            ..Default::default()
+        };
+        // qwen3_asr 后端使用内置 HF tokenizer，tokens 置空串（与官方 rust 示例一致）
+        config.model_config.tokens = Some(String::new());
+        config.model_config.num_threads = std::thread::available_parallelism()
+            .map(|n| n.get() as i32)
+            .unwrap_or(4);
 
-        tracing::info!("Qwen3-ASR 模型加载完成: {:?}", model_dir);
+        let recognizer = OfflineRecognizer::create(&config)
+            .ok_or_else(|| AsrError::LoadFailed("创建 Qwen3-ASR 识别器失败".to_string()))?;
+
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = Some(recognizer);
+
+        tracing::info!("Qwen3-ASR ONNX 引擎加载完成 (目录: {:?})", model_dir);
         Ok(())
     }
 
-    /// 将音频转换为梅尔频谱特征
-    fn audio_to_features(&self, audio: &AudioData) -> Result<Array3<f32>, AsrError> {
-        let pcm = audio.to_mono_f32_16k();
-        let n_samples = pcm.len();
-
-        let frame_length = 400; // 25ms @ 16kHz
-        let frame_shift = 160; // 10ms @ 16kHz
-
-        if n_samples < frame_length {
-            return Err(AsrError::EmptyAudio);
-        }
-        let n_frames = (n_samples - frame_length) / frame_shift + 1;
-        let n_mels = 80;
-
-        let mut features = vec![0.0f32; n_frames * n_mels];
-
-        // 简化的特征提取
-        for frame_idx in 0..n_frames {
-            let start = frame_idx * frame_shift;
-            let end = start + frame_length;
-            if end > n_samples {
-                break;
-            }
-
-            let frame_energy: f32 =
-                pcm[start..end].iter().map(|&x| x * x).sum::<f32>() / frame_length as f32;
-            let log_energy = (frame_energy + 1e-10).ln();
-
-            for mel_idx in 0..n_mels {
-                let idx = frame_idx * n_mels + mel_idx;
-                features[idx] = log_energy * (1.0 - mel_idx as f32 / n_mels as f32);
+    /// 按候选名查找文件
+    fn find_file(model_dir: &Path, candidates: &[&str]) -> Result<PathBuf, AsrError> {
+        for name in candidates {
+            let p = model_dir.join(name);
+            if p.exists() {
+                return Ok(p);
             }
         }
+        Err(AsrError::ModelNotFound(format!(
+            "Qwen3-ASR 模型文件缺失: {:?} 中未找到 {}。\
+             请从 sherpa-onnx 官方预转换包落位（models/registry/qwen3-asr.yaml）",
+            model_dir,
+            candidates.join(" / ")
+        )))
+    }
 
-        Array3::from_shape_vec((1, n_frames, n_mels), features)
-            .map_err(|e| AsrError::RecognizeFailed(format!("创建特征张量失败: {}", e)))
+    /// 查找模型目录
+    fn find_model_dir(model: &Model) -> Result<PathBuf, AsrError> {
+        // 优先检查 models/asr/qwen3-asr/ 目录
+        let models_dir = Path::new("models").join("asr").join("qwen3-asr");
+        if models_dir.is_dir() {
+            return Ok(models_dir);
+        }
+
+        // 回退：检查 models/<model_name>/ 目录
+        let models_dir = Path::new("models").join(&model.name);
+        if models_dir.is_dir() {
+            return Ok(models_dir);
+        }
+
+        // 检查 model.name 是否为目录路径
+        let model_path = Path::new(&model.name);
+        if model_path.is_dir() {
+            return Ok(model_path.to_path_buf());
+        }
+
+        Err(AsrError::ModelNotFound(format!(
+            "未找到 Qwen3-ASR 模型目录，请将模型文件放在 models/asr/qwen3-asr/ 目录下。\
+             需要文件: conv_frontend.onnx, encoder.int8.onnx, decoder.int8.onnx, tokenizer/"
+        )))
     }
 }
 
@@ -115,15 +146,13 @@ impl AsrProvider for Qwen3AsrProvider {
         EngineKind::Qwen3Asr
     }
 
-    fn load(&mut self, model: &Model) -> Result<(), AsrError> {
-        let model_dir = ModelFileLocator::locate_model_dir(model)
-            .map_err(|e| AsrError::ModelNotFound(format!("{}", e)))?;
+    fn load(&self, model: &Model) -> Result<(), AsrError> {
+        let model_dir = Self::find_model_dir(model)?;
         self.load_from_dir(&model_dir)
     }
 
-    fn unload(&mut self) -> Result<(), AsrError> {
-        self.state.unload();
-        self.tokenizer = None;
+    fn unload(&self) -> Result<(), AsrError> {
+        *self.recognizer.lock().unwrap_or_else(|e| e.into_inner()) = None;
         tracing::info!("Qwen3-ASR 引擎已释放");
         Ok(())
     }
@@ -133,58 +162,125 @@ impl AsrProvider for Qwen3AsrProvider {
         audio: &AudioData,
         _params: &AsrParams,
     ) -> Result<RecognizeOutput, AsrError> {
-        let tokenizer = self.tokenizer.as_ref().ok_or(AsrError::EngineNotLoaded)?;
+        let guard = self.recognizer.lock().unwrap_or_else(|e| e.into_inner());
+        let recognizer = guard.as_ref().ok_or(AsrError::EngineNotLoaded)?;
 
         if audio.samples.is_empty() {
             return Err(AsrError::EmptyAudio);
         }
-        // 提取特征
-        let features = self.audio_to_features(audio)?;
 
-        // 准备输入
-        let input_value = ort::value::Value::from_array(features)
-            .map_err(|e| AsrError::RecognizeFailed(format!("创建输入值失败: {}", e)))?;
+        // 转换为 16kHz 单声道 f32 PCM
+        let pcm_data = audio.to_mono_f32_16k();
 
-        // 使用 EngineState 安全访问 session 并执行推理
-        let output_vec = self.state.with_mut(|session| {
-            let outputs = session
-                .run(ort::inputs![input_value])
-                .map_err(|e| AsrError::RecognizeFailed(format!("Qwen3-ASR 推理失败: {}", e)))?;
+        // 创建流并输入音频
+        let stream = recognizer.create_stream();
+        stream.accept_waveform(self.sample_rate as i32, &pcm_data);
 
-            let output_ids = outputs[0]
-                .try_extract_array::<i64>()
-                .map_err(|e| AsrError::RecognizeFailed(format!("提取输出失败: {}", e)))?;
+        // 执行推理
+        recognizer.decode(&stream);
 
-            Ok::<Vec<u32>, AsrError>(output_ids.iter().map(|&x| x as u32).collect())
-        }).map_err(|_| AsrError::EngineNotLoaded)??;
+        // 获取结果
+        let result = stream.get_result().ok_or_else(|| {
+            AsrError::RecognizeFailed("Qwen3-ASR 推理未返回结果".to_string())
+        })?;
 
-        // 解码文本
-        let text = tokenizer
-            .decode(&output_vec, true)
-            .map_err(|e| AsrError::RecognizeFailed(format!("解码失败: {}", e)))?;
+        tracing::info!("Qwen3-ASR 识别完成: 文本长度 {}", result.text.len());
 
-        let mut word_timestamps = Vec::new();
-        if !text.is_empty() {
-            word_timestamps.push(WordTimestamp {
-                word: text.clone(),
+        // 将整段文本作为一个时间戳项
+        let word_timestamps = if result.text.is_empty() {
+            Vec::new()
+        } else {
+            vec![WordTimestamp {
+                word: result.text.clone(),
                 start_ms: 0.0,
                 end_ms: 0.0,
-            });
-        }
-
-        tracing::info!("Qwen3-ASR 识别完成: 文本长度 {}", text.len());
+            }]
+        };
 
         Ok(RecognizeOutput {
-            text,
+            text: result.text,
             word_timestamps,
         })
     }
 
     fn sample_rate(&self) -> u32 {
-        16000
+        self.sample_rate
     }
 
     fn is_loaded(&self) -> bool {
-        self.state.is_loaded()
+        self.recognizer
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+}
+
+// ============================================================
+// 单元测试
+// ============================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_engine_kind() {
+        let provider = Qwen3AsrProvider::new();
+        assert_eq!(provider.engine_kind(), EngineKind::Qwen3Asr);
+    }
+
+    #[test]
+    fn test_sample_rate() {
+        let provider = Qwen3AsrProvider::new();
+        assert_eq!(provider.sample_rate(), 16000);
+    }
+
+    #[test]
+    fn test_is_loaded_initially_false() {
+        let provider = Qwen3AsrProvider::new();
+        assert!(!provider.is_loaded());
+    }
+
+    #[test]
+    fn test_unload_when_not_loaded() {
+        let provider = Qwen3AsrProvider::new();
+        assert!(provider.unload().is_ok());
+    }
+
+    #[test]
+    fn test_find_file_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("encoder.int8.onnx");
+        std::fs::write(&p, b"fake").unwrap();
+        assert_eq!(
+            Qwen3AsrProvider::find_file(dir.path(), &["encoder.int8.onnx", "encoder.onnx"])
+                .unwrap(),
+            p
+        );
+        assert!(Qwen3AsrProvider::find_file(dir.path(), &["decoder.int8.onnx"]).is_err());
+    }
+
+    #[test]
+    fn test_recognize_requires_loaded_engine() {
+        let provider = Qwen3AsrProvider::new();
+        let audio = AudioData {
+            samples: vec![0.0; 16000],
+            sample_rate: 16000,
+            channels: 1,
+        };
+        let params = AsrParams {
+            model: votex_domain::model::value_object::ModelId::new("qwen3-asr"),
+            language: votex_domain::asr::value_object::Language::Zh,
+            auto_punctuation: false,
+            auto_slice: false,
+            slice_length: votex_domain::asr::value_object::SliceLength::S30,
+            denoise: false,
+            denoise_level: votex_domain::asr::value_object::DenoiseLevel::Low,
+            output_format: votex_domain::asr::value_object::SubtitleFormat::Txt,
+        };
+        assert!(matches!(
+            provider.recognize(&audio, &params),
+            Err(AsrError::EngineNotLoaded)
+        ));
     }
 }

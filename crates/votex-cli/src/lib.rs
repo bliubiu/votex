@@ -1,163 +1,79 @@
+//! CLI 表现层
+//!
+//! 命令行入口。仅负责参数解析（`clap`）、调用应用层用例、格式化输出。
+//!
+//! # 分层规则
+//!
+//! - ✅ 依赖 `votex-app` / `votex-domain`
+//! - ❌ **业务逻辑不得写在命令里** —— 一律下沉到 `votex-app::use_case`
+//! - ❌ **不得出现 `votex_infra::` / `rusqlite`** —— 基础设施一律走
+//!   `votex-app::platform` 门面，装配走 `votex-app::bootstrap::AppContext`
+//!
+//! # 与 GUI 的对等性
+//!
+//! AGENTS.md 要求「CLI 与 GUI 功能完全对等（同一套领域层，两套表现层）」。
+//! `commands/` 下的每个子命令都应在 `gui/pages/` 有对应页面；
+//! 两者的差异只能是交互形式（参数 vs 表单），不能是能力。
+//!
+//! # 启动流程
+//!
+//! 全部收敛到 [`votex_app::bootstrap::AppContext::bootstrap`]，
+//! 与 GUI 走**同一份**装配代码：
+//!
+//! 1. 定位 ONNX Runtime 动态库（`ensure_runtime_library`，必须在任何 ort 调用前）
+//! 2. 加载 `application.yml`（解析失败显式报错，不静默降级）
+//! 3. 初始化日志、执行提供器、推理资源限制
+//! 4. 下发下载配置（超时 / 断点续传）
+//! 5. 资源治理、翻译运行时
+//! 6. 打开 SQLite（启用 WAL 与 `foreign_keys`），构造各仓储
+//! 7. 解析子命令并执行
+
 pub mod commands;
 
 use anyhow::Result;
 use clap::Parser;
 use commands::root::{BatchAction, Cli, Commands, OcrAction};
-use std::sync::{Arc, Mutex};
-use rusqlite::Connection;
-use votex_domain::config::value_object::AppConfig;
+use votex_app::bootstrap::{AppContext, BootstrapOptions};
+use votex_domain::repository::DownloadRepository;
 
 /// 运行模式 —— CLI 执行完初始化后主入口根据此值决定下一步
 pub enum RunMode {
     /// 纯 CLI 模式，命令已执行完毕
     Cli,
     /// 需要启动 GUI
-    Gui {
-        models_dir: String,
-        pipeline_repo: Option<Arc<dyn votex_domain::repository::PipelineRepository>>,
-        download_repo: Option<Arc<votex_infra::persistence::download_repo::SqliteDownloadRepository>>,
-    },
+    Gui(Box<AppContext>),
 }
 
-/// CLI 初始化流程（与 GUI 共享），返回下一步的运行模式
+/// CLI 初始化流程（与 GUI 共享同一份 `AppContext` 装配），返回下一步的运行模式
 pub fn run() -> Result<RunMode> {
     let cli = Cli::parse();
 
-    // 加载配置文件（可选）
-    let config_path = std::path::PathBuf::from(&cli.config);
-    let app_config: Option<AppConfig> = std::fs::read_to_string(&config_path)
-        .ok()
-        .and_then(|c| serde_yml::from_str(&c).ok());
-
-    // 加密配置文件中的敏感字段
-    if app_config.is_some() {
-        let crypto = votex_infra::security::config_crypto::ConfigCrypto::new(None);
-        if crypto.initialize().is_ok() {
-            let _ = crypto.encrypt_config_file(&config_path);
-        }
-    }
-
-    // 从配置读取日志参数，--verbose 覆盖为 debug
-    let log_level = app_config.as_ref()
-        .map(|c| c.log.level.as_str())
-        .unwrap_or("info");
-    let log_level = if cli.verbose { "debug" } else { log_level };
-    let log_dir = app_config.as_ref()
-        .map(|c| c.log.dir.as_str())
-        .unwrap_or("logs");
-    let log_file_enabled = app_config.as_ref()
-        .map(|c| c.log.file_enabled)
-        .unwrap_or(true);
-
-    // 初始化日志
-    votex_infra::logging::init::init(log_dir, log_level, log_file_enabled)?;
-
-    // 配置 ONNX Runtime 执行提供器（GPU / CPU）
-    let ep_name = app_config.as_ref()
-        .map(|c| c.inference.execution_provider.as_str())
-        .unwrap_or("auto");
-    let ep = votex_infra::shared::ExecutionProvider::from_config(ep_name);
-    votex_infra::shared::OrtSessionFactory::set_global_ep(ep);
-    tracing::info!("ONNX Runtime 执行提供器: {:?}", ep);
-
-    // 注入全局推理配置（资源限制等）
-    if let Some(ref cfg) = app_config {
-        let inference = &cfg.inference;
-        let mut resource_info = String::new();
-        if inference.num_threads > 0 {
-            resource_info.push_str(&format!("CPU 线程={}", inference.num_threads));
-        }
-        if inference.memory_limit_mb > 0 {
-            if !resource_info.is_empty() { resource_info.push_str(", "); }
-            resource_info.push_str(&format!("内存上限={}MB", inference.memory_limit_mb));
-        }
-        if resource_info.is_empty() {
-            resource_info = "无限（使用全部可用资源）".to_string();
-        }
-        votex_infra::shared::OrtSessionFactory::set_global_config(cfg.inference.clone());
-        tracing::info!("推理资源限制: {}", resource_info);
-    }
+    // 装配：ORT 动态库 → 配置 → 日志 → EP/推理配置 → 资源治理 →
+    //      下载配置 → 翻译运行时 → 数据库与仓储
+    let ctx = AppContext::bootstrap(
+        BootstrapOptions::new(&cli.config)
+            .with_models_dir(Some(std::path::PathBuf::from(&cli.models_dir)))
+            .with_log_level(if cli.verbose { Some("debug".into()) } else { None })
+            .with_db_path(Some(votex_app::platform::paths::default_db_path())),
+    )?;
 
     // 注册 Ctrl+C 信号处理器，确保优雅退出
-    ctrlc::set_handler(move || {
+    ctrlc::set_handler(|| {
         tracing::warn!("收到中断信号（Ctrl+C），正在退出...");
         std::process::exit(0);
     })?;
 
-    // 默认目录（优先 CLI 参数，其次配置文件）
-    let models_dir = std::path::PathBuf::from(
-        app_config.as_ref()
-            .map(|c| c.models.storage_path.as_str())
-            .unwrap_or("models")
-    );
-    let models_dir_str = cli.models_dir.clone(); // CLI 参数（有默认值 "models"），优先级最高
-    let db_path = std::path::PathBuf::from("data/votex.db");
-
-    // 初始化翻译运行时：进程级共享的模型会话池 + 翻译缓存
-    // 必须在任何翻译调用之前完成，否则会退化成「每次翻译重新加载模型」
-    let effective_models_dir = std::path::PathBuf::from(&models_dir_str);
-    votex_app::services::translation_runtime::init(effective_models_dir.clone());
-    if let Some(cfg) = app_config.as_ref() {
-        if cfg.translation.enable_cache {
-            votex_app::services::translation_runtime::init_cache(cfg.translation.cache_capacity);
-        } else {
-            votex_app::services::translation_runtime::init_cache(0);
-        }
-    }
-
-    // 初始化资源治理：内存压力阈值 + 推理并发闸门
-    {
-        let rc = app_config
-            .as_ref()
-            .map(|c| c.resource.clone())
-            .unwrap_or_default();
-        if rc.enforce_limits {
-            let monitor = votex_infra::shared::ResourceMonitor::global();
-            monitor.set_thresholds(rc.memory_yellow_used_pct, rc.memory_red_used_pct);
-            votex_infra::shared::InferenceGate::global()
-                .configure_max_permits(rc.max_inference_concurrency);
-            tracing::info!(
-                "资源治理已启用: 推理并发上限 {}, 内存压力阈值 Yellow {:.0}% / Red {:.0}%",
-                rc.max_inference_concurrency,
-                rc.memory_yellow_used_pct,
-                rc.memory_red_used_pct
-            );
-        } else {
-            tracing::warn!("资源治理已关闭（resource.enforce_limits=false），推理不再受内存限制");
-        }
-    }
-
-    // 打开共享数据库连接，各 repo 共用同一连接
-    let db_conn = match votex_infra::persistence::db::open_database(&db_path) {
-        Ok(conn) => Some(conn),
-        Err(e) => {
-            tracing::warn!("打开数据库失败，部分功能降级: {}", e);
-            None
-        }
-    };
-
-    // 创建下载记录 repo
-    let download_repo = db_conn.clone().map(|c| {
-        Arc::new(votex_infra::persistence::download_repo::SqliteDownloadRepository::new(c))
-    });
+    let models_dir = ctx.models_dir().to_path_buf();
 
     // GUI 模式 → 返回 RunMode::Gui，由主入口启动 GUI
     if cli.gui {
-        let pipeline_repo = db_conn.clone().map(|c| {
-            Arc::new(votex_infra::persistence::pipeline_repo::SqlitePipelineRepository::new(c))
-                as Arc<dyn votex_domain::repository::PipelineRepository>
-        });
-        return Ok(RunMode::Gui {
-            models_dir: models_dir_str,
-            pipeline_repo,
-            download_repo,
-        });
+        return Ok(RunMode::Gui(Box::new(ctx)));
     }
 
     if let Some(command) = cli.command {
         match command {
             Commands::Model { action } => {
-                commands::model::handle(&action, &models_dir, download_repo.clone())?;
+                commands::model::handle(&action, &models_dir, ctx.download_repo().cloned())?;
             }
             Commands::Voice { action } => {
                 commands::voice::handle(&action)?;
@@ -169,24 +85,19 @@ pub fn run() -> Result<RunMode> {
                 commands::asr::handle(&input, &output, &model, &format, &lang)?;
             }
             Commands::Ocr { action } => {
-                handle_ocr(action, &models_dir, db_conn.clone())?;
+                handle_ocr(action, &models_dir, ctx.ocr_repo().cloned())?;
             }
             Commands::Pipeline { kind, input, output, engine, voice, speed, asr_model, subtitle_format } => {
-                let pipeline_repo = db_conn.clone().map(|c| {
-                    Arc::new(votex_infra::persistence::pipeline_repo::SqlitePipelineRepository::new(c))
-                        as Arc<dyn votex_domain::repository::PipelineRepository>
-                });
                 commands::pipeline::handle(
                     &kind, &input, &output, &engine, &voice, speed, &asr_model, &subtitle_format,
-                    pipeline_repo,
+                    ctx.pipeline_repo().cloned(),
                 )?;
             }
             Commands::Batch { action } => {
                 handle_batch(action)?;
             }
             Commands::Config { action } => {
-                let config_path = std::path::PathBuf::from(&cli.config);
-                commands::config::handle(&action, &config_path)?;
+                commands::config::handle(&action, ctx.config_path())?;
             }
             Commands::Script(cmd) => {
                 commands::script::handle(&cmd)?;
@@ -229,10 +140,12 @@ pub fn run() -> Result<RunMode> {
 }
 
 /// 处理 OCR 子命令
+///
+/// `repo` 为 `None` 表示数据库不可用，此时只执行不持久化。
 fn handle_ocr(
     action: OcrAction,
     models_dir: &std::path::Path,
-    db_conn: Option<Arc<Mutex<Connection>>>,
+    repo: Option<std::sync::Arc<dyn votex_domain::repository::OcrTaskRepository>>,
 ) -> Result<()> {
     use commands::ocr;
     match action {
@@ -244,44 +157,22 @@ fn handle_ocr(
                 no_cls,
                 &engine,
                 models_dir,
-                db_conn.clone(),
+                repo,
             )
         }
         OcrAction::Batch { inputs, output, format, no_cls, engine, concurrency } => {
-            if let Some(conn) = db_conn.clone() {
-                let repo = votex_infra::persistence::ocr_repo::SqliteOcrTaskRepository::new(conn);
-                ocr::run_batch_ocr_with_repo(
-                    &inputs, &output, &format, no_cls, &engine, concurrency, models_dir, repo,
-                )
-            } else {
-                ocr::run_batch_ocr(
-                    &inputs, &output, &format, no_cls, &engine, concurrency, models_dir,
-                )
-            }
+            ocr::run_batch_ocr(
+                &inputs, &output, &format, no_cls, &engine, concurrency, models_dir, repo,
+            )
         }
         OcrAction::List => {
-            if let Some(conn) = db_conn {
-                ocr::list_ocr_tasks(conn)
-            } else {
-                tracing::warn!("数据库不可用，无法列出 OCR 任务");
-                Ok(())
-            }
+            ocr::list_ocr_tasks(repo)
         }
         OcrAction::Show { task_id } => {
-            if let Some(conn) = db_conn {
-                ocr::show_ocr_task(conn, &task_id)
-            } else {
-                tracing::warn!("数据库不可用，无法查看 OCR 任务");
-                Ok(())
-            }
+            ocr::show_ocr_task(repo, &task_id)
         }
         OcrAction::Delete { task_id } => {
-            if let Some(conn) = db_conn {
-                ocr::delete_ocr_task(conn, &task_id)
-            } else {
-                tracing::warn!("数据库不可用，无法删除 OCR 任务");
-                Ok(())
-            }
+            ocr::delete_ocr_task(repo, &task_id)
         }
     }
 }
@@ -307,3 +198,6 @@ fn handle_batch(action: BatchAction) -> Result<()> {
         }
     }
 }
+
+/// 供 `commands::model` 复用的下载进度上报类型
+pub type SharedDownloadRepo = Option<std::sync::Arc<dyn DownloadRepository>>;

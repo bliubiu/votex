@@ -1,0 +1,16 @@
+id: firered-asr-ctc
+name: FireRedASR v2 CTC
+kind: Asr
+engine: FireRedAsr
+files:
+  - name: model.int8.onnx
+    sha256: ca3dbabd82170110cc0b343c2890866d449984bc9cd92b9a18371ff80a81bb99
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25/resolve/main/model.int8.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25/resolve/main/model.int8.onnx
+      github: https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25.tar.bz2
+  - name: tokens.txt
+    sha256: 1bc613de2112d257e61a349c3e72d1b1a9cf19c33d3ca954197ad2171e5ea07b
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25/resolve/main/tokens.txt
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-fire-red-asr2-ctc-zh_en-int8-2026-02-25/resolve/main/tokens.txt

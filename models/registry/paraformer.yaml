@@ -1,0 +1,31 @@
+# Paraformer（sherpa-onnx 官方转换包，zh+en+yue）
+#
+# 说明：
+# - 旧版清单指向 FunASR 原始导出（modelscope iic/speech_paraformer-large...-onnx，
+#   model_quant.onnx + tokens.json）。该导出**缺少 sherpa-onnx Paraformer 加载器
+#   必需的 vocab_size 元数据**，votex 的 paraformer.rs 已切换为 sherpa-onnx 绑定，
+#   直接加载会导致 sherpa C++ 端 abort 整个进程（provider 已加拒绝护栏）。
+# - 现指向 sherpa-onnx 维护者的官方转换包（csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09），
+#   model.int8.onnx 已内嵌 vocab_size 元数据与 CMVN，词表为 sherpa 行格式 tokens.txt，
+#   支持中/英/粤（zh+en+yue）。
+# - 单文件直连（非 tar.bz2），逐文件校验 sha256。
+id: paraformer
+name: Paraformer
+kind: Asr
+engine: Paraformer
+files:
+  - name: model.int8.onnx
+    sha256: 90bc03034ae1bef9575f8cc798cd1519c8be8aa9e8b458a033e32017ff4d584c
+    size: 227330205
+    required: true
+    sources:
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.int8.onnx
+
+  - name: tokens.txt
+    sha256: 6c0e3b35cece259829e6cb5b8d90d13db88f61ea3a2953d11898e4b2bfd7a2e2
+    size: 75354
+    required: true
+    sources:
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/tokens.txt

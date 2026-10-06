@@ -44,7 +44,7 @@ impl AliyunAsrProvider {
             .map_err(|e| AsrError::RecognizeFailed(format!("创建 HTTP 客户端失败: {}", e)))?;
 
         Ok(Self {
-            engine: EngineKind::SenseVoice,
+            engine: EngineKind::AliyunAsr,
             client,
             access_key,
             secret_key,
@@ -82,11 +82,11 @@ impl AsrProvider for AliyunAsrProvider {
         self.engine
     }
 
-    fn load(&mut self, _model: &Model) -> Result<(), AsrError> {
+    fn load(&self, _model: &Model) -> Result<(), AsrError> {
         Ok(())
     }
 
-    fn unload(&mut self) -> Result<(), AsrError> {
+    fn unload(&self) -> Result<(), AsrError> {
         Ok(())
     }
 

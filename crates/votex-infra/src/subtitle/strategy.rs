@@ -95,12 +95,14 @@ impl FastSubtitleGenerator {
 
         for (i, sentence) in sentences.iter().enumerate() {
             let char_count = sentence.chars().count() as u64;
-            // 按字数比例分配时间
+            // 按字数比例分配时间。不能给单句设 500ms 下限：句子数 × 500ms
+            // 超过总时长时时间轴会在结尾塌缩（几十条字幕堆叠在同一时刻）。
+            // 比例分配的总和恒 ≤ 总时长，最后一段取剩余全部时间。
             let duration_ms = if i == sentences.len() - 1 {
                 // 最后一段占剩余全部时间
                 total_duration_ms.saturating_sub(current_time_ms)
             } else {
-                (char_count * total_duration_ms / total_chars as u64).max(500) // 最少 500ms
+                char_count * total_duration_ms / total_chars as u64
             };
 
             let end_time_ms = (current_time_ms + duration_ms).min(total_duration_ms);
@@ -134,6 +136,9 @@ impl FastSubtitleGenerator {
         let mut sentence_start_ms = word_timestamps[0].start_ms;
         let mut sentence_words = Vec::new();
         let mut index = 1;
+        // 已组句消费的词数——下一句的起始时间必须取「下一个未消费词」，
+        // 不能用 entries.len()（那是句子数，会导致时间轴随句子数累积错位）
+        let mut word_index = 0usize;
         let _ = format; // 格式参数由调用方决定输出格式
 
         for wt in word_timestamps {
@@ -151,8 +156,9 @@ impl FastSubtitleGenerator {
                     text: sentence_words.join(" "),
                 });
                 index += 1;
+                word_index += sentence_words.len();
                 sentence_words.clear();
-                if let Some(next) = word_timestamps.get(entries.len()) {
+                if let Some(next) = word_timestamps.get(word_index) {
                     sentence_start_ms = next.start_ms;
                 }
             }
@@ -279,21 +285,7 @@ impl PreciseSubtitleGenerator {
         None
     }
 
-    /// 在句子边界处断开
-    #[allow(dead_code)]
-    fn find_sentence_boundary(words: &[String], max_idx: usize) -> Option<usize> {
-        let end = max_idx.min(words.len().saturating_sub(1));
-        for i in (0..=end).rev() {
-            let w = &words[i];
-            if w.ends_with('.') || w.ends_with('!') || w.ends_with('?')
-                || w.ends_with('。') || w.ends_with('！') || w.ends_with('？')
-            {
-                return Some(i);
-            }
-        }
-        None
     }
-}
 
 // ============================================================
 // 字幕生成服务（策略分发）
@@ -405,6 +397,58 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].text, "你好 世界。");
         assert_eq!(entries[1].text, "这是 测试。");
+    }
+
+    #[test]
+    fn test_fast_generator_词级时间戳_时间轴不错位() {
+        // 第一句占 3 个词：下一句的起始时间必须取第 4 个词（索引 3），
+        // 此前用 entries.len()（=1）当词索引，取到第一句中间的词导致时间轴错位
+        let wts = vec![
+            WordTimestamp { word: "第一句".to_string(), start_ms: 0.0, end_ms: 400.0 },
+            WordTimestamp { word: "占三个".to_string(), start_ms: 400.0, end_ms: 800.0 },
+            WordTimestamp { word: "词。".to_string(), start_ms: 800.0, end_ms: 1200.0 },
+            WordTimestamp { word: "第二句。".to_string(), start_ms: 1200.0, end_ms: 2000.0 },
+        ];
+
+        let entries = FastSubtitleGenerator::from_word_timestamps(&wts, SubtitleFormat::Srt);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].start_time.to_srt_format(), "00:00:00,000");
+        assert_eq!(entries[0].end_time.to_srt_format(), "00:00:01,200");
+        assert_eq!(entries[1].start_time.to_srt_format(), "00:00:01,200");
+        assert_eq!(entries[1].end_time.to_srt_format(), "00:00:02,000");
+    }
+
+    #[test]
+    fn test_fast_generator_短时长不塌缩() {
+        // 句数 × 500ms 下限曾超过总时长，导致几十条字幕堆叠在结尾同一时刻；
+        // 比例分配下时间轴必须单调前进且落在总时长内
+        let text = "一。二。三。四。五。六。七。八。九。十。";
+        let total = 1000u64;
+        let entries = FastSubtitleGenerator::generate(text, total, SubtitleFormat::Srt);
+        assert_eq!(entries.len(), 10);
+        for (i, e) in entries.iter().enumerate() {
+            assert!(e.start_time.to_srt_format() <= e.end_time.to_srt_format());
+            if i > 0 {
+                let prev = &entries[i - 1];
+                assert!(
+                    e.start_time.to_srt_format() >= prev.end_time.to_srt_format(),
+                    "字幕时间轴必须单调前进: 第{}条早于第{}条结束",
+                    i + 1,
+                    i
+                );
+            }
+        }
+        let last = entries.last().unwrap();
+        assert_eq!(last.end_time.to_srt_format(), "00:00:01,000");
+    }
+
+    #[test]
+    fn test_lrc_超一小时时间轴() {
+        // 1h01m23s 处的条目此前写成 [01:23.45]（丢小时位），
+        // LRC 分钟位必须折入小时：1h01m23.45s = 61分23.45秒 → [61:23.45]
+        let ts = Timestamp::from_millis(3_683_450);
+        assert_eq!(ts.to_lrc_format(), "[61:23.45]");
+        assert_eq!(Timestamp::from_millis(59_999).to_lrc_format(), "[00:59.99]");
     }
 
     #[test]

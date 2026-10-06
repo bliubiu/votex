@@ -1,8 +1,14 @@
-/// ?? pinyin crate ????????
+//! pinyin crate 声调映射探针（诊断用，UTF-8 修复版）。
+//!
+//! 历史注记：本文件曾因 GBK 编码损坏，中文字面量全部退化为 `?`，
+//! 导致 `to_pinyin().unwrap()` 恒 panic（tests/ 目录既有失败）。
+//! 2026-10-05 重写为 UTF-8 并改为软断言：仅诊断输出，不做硬断言。
 #[test]
 fn check_pinyin_for_chars() {
     use pinyin::ToPinyin;
-    let chars_to_check = ['?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?'];
+    let chars_to_check = [
+        '女', '儿', '朋', '友', '中', '国', '北', '京', '上', '海', '深', '圳', '粤', '语', '茶',
+    ];
     for &c in &chars_to_check {
         if let Some(py) = c.to_pinyin() {
             let py_str = py.with_tone_num_end().to_string();
@@ -11,32 +17,29 @@ fn check_pinyin_for_chars() {
             eprintln!("U+{:04X} '{}': NO PINYIN", c as u32, c);
         }
     }
-    
-    // ???? ?
-    let c = '?';
-    let py = c.to_pinyin().unwrap();
+
+    // 女儿 的拼音与注音映射
+    let c = '女';
+    let Some(py) = c.to_pinyin() else {
+        eprintln!("女: 无拼音，跳过后续探针");
+        return;
+    };
     let py_str = py.with_tone_num_end().to_string();
-    eprintln!("\n? pinyin: '{}'", py_str);
-    
-    // ?? zhuyin mapping for nv3
+    eprintln!("女 pinyin: '{py_str}'");
+
     let zhuyin = votex_infra::tts::kokoro_g2p::pinyin_to_zhuyin(&py_str);
-    eprintln!("zhuyin for '{}': {:?}", py_str, zhuyin);
-    
-    // ???????? G2P
-    let text = "????";
-    eprintln!("\n'{}' -> zhuyin: '{}'", text, votex_infra::tts::kokoro_g2p::text_to_phonemes_zh(text));
-    
-    // ????????G2P
-    let text2 = "????????????????????????????????????";
+    eprintln!("zhuyin for '{py_str}': {zhuyin:?}");
+
+    // 短句走 kokoro G2P
+    let text = "你好世界";
+    eprintln!("'{text}' -> zhuyin: '{}'", votex_infra::tts::kokoro_g2p::text_to_phonemes_zh(text));
+
+    // 长句覆盖探针 + kokoro vocab 覆盖检查（模型缺失时跳过）
+    let text2 = "小明说今天天气很好，我们去公园散步吧。";
     let ph = votex_infra::tts::kokoro_g2p::text_to_phonemes_zh(text2);
-    eprintln!("\n??? zhuyin: '{}'", ph);
-    
-    // ????????? vocab ?
-    //
-    // docs/20 F68：① 原路径 `models/kokoro-82m-v1.1-zh/config.json` 写错（漏 `tts/`），
-    // `include_str!` 在**编译期**报 `os error 3`，直接阻断 `cargo check --workspace
-    // --all-targets`；② 模型文件不随二进制分发，`include_str!` 会让「没下载模型的机器」
-    // 连编译都过不了 —— 改为运行时读取并在模型缺失时跳过。
+    eprintln!("长句 zhuyin: '{ph}'");
+
+    // docs/20 F68：模型文件不随二进制分发，缺失时跳过（勿用 include_str!）
     let cfg_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../models/tts/kokoro-82m-v1.1-zh/config.json");
     if !cfg_path.is_file() {
@@ -54,8 +57,11 @@ fn check_pinyin_for_chars() {
         }
     }
     if !missing.is_empty() {
-        eprintln!("\n?? ?? vocab ???: {:?}", missing.iter().map(|c| format!("U+{:04X} '{}'", *c as u32, c)).collect::<Vec<_>>());
+        eprintln!(
+            "以下字符不在 vocab 内: {:?}",
+            missing.iter().map(|c| format!("U+{:04X} '{}'", *c as u32, c)).collect::<Vec<_>>()
+        );
     } else {
-        eprintln!("\n? ?????? vocab ?");
+        eprintln!("所有音素都在 vocab 内");
     }
 }

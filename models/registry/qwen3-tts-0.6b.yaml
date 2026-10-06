@@ -1,0 +1,209 @@
+id: qwen3-tts-0.6b
+name: Qwen3-TTS-0.6B
+kind: Tts
+engine: Qwen3Tts
+# 社区 ONNX 转换版本：https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX
+# 基于 Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice 导出，9 种预设音色
+files:
+  # 嵌入配置（替代根目录 config.json）
+  - name: embeddings/config.json
+    sha256: 40623c05e03cf97cb5dc8d2ba84aeb0c8f5649600c91bb56d65b416a804f2f56
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/config.json
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/config.json
+  # 文本分词器（BPE 格式：vocab.json + merges.txt）
+  - name: tokenizer/vocab.json
+    sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/tokenizer/vocab.json
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/tokenizer/vocab.json
+  - name: tokenizer/merges.txt
+    sha256: 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/tokenizer/merges.txt
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/tokenizer/merges.txt
+  # Embeddings（维度为 1024，与 1.7B 的 2048 不同）
+  - name: embeddings/text_embedding.npy
+    sha256: 843354d7f837c2f8ac1e0708320226a98bf4b03057e34da59f8ff6dd197b2054
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_embedding.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_embedding.npy
+  - name: embeddings/talker_codec_embedding.npy
+    sha256: 65a94ed3c86cb17e40504a581c746b274a4e56ba200c6f99f383a1bb6274cfbd
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/talker_codec_embedding.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/talker_codec_embedding.npy
+  - name: embeddings/text_projection_fc1_weight.npy
+    sha256: 4b39093c0011eca2a955fcd272a7165271e3a37ff0d24ab51d5cfa60925b77af
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_projection_fc1_weight.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_projection_fc1_weight.npy
+  - name: embeddings/text_projection_fc1_bias.npy
+    sha256: e9a50b7668d089b5fc250f15a61941b97e573e43430587be06c404cbe447c5dc
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_projection_fc1_bias.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_projection_fc1_bias.npy
+  - name: embeddings/text_projection_fc2_weight.npy
+    sha256: 104adb52eabb786a4e26696b323e11a92e4b3568849c04960e907ac44d687b4d
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_projection_fc2_weight.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_projection_fc2_weight.npy
+  - name: embeddings/text_projection_fc2_bias.npy
+    sha256: e66b17cef017c40c37970d27a626171d9a75ab4729fdab7843f8d1f9e9ce7963
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_projection_fc2_bias.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/text_projection_fc2_bias.npy
+  - name: embeddings/codec_head_weight.npy
+    sha256: b54db90bbad7148ddb49eb9c693d0956055e80bcd7c6f985293d7da050f0adc6
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/codec_head_weight.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/codec_head_weight.npy
+  - name: embeddings/speaker_ids.json
+    sha256: e6ca4dc700095ca487f6da18b146852a1e4ea3d11f827d654fbb071d91a4c199
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/speaker_ids.json
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/speaker_ids.json
+  # cp_codec_embedding (num_code_groups=16, 所以 groups 1-15 需要 15 个 embedding 文件: 0..14)
+  - name: embeddings/cp_codec_embedding_0.npy
+    sha256: 9b1bd89a06be7fc6eb07e6b03d6d3fdc4762b5d0e0db124d74c608c0638082e3
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_0.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_0.npy
+  - name: embeddings/cp_codec_embedding_1.npy
+    sha256: f0d6e187dec6f037980e38911b27016c0531bb34718bb96ccb954366fc495d21
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_1.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_1.npy
+  - name: embeddings/cp_codec_embedding_2.npy
+    sha256: 5ae15feb83dc7f97e6f939fe98c9dda91c08749c2a69384d71a8414166792825
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_2.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_2.npy
+  - name: embeddings/cp_codec_embedding_3.npy
+    sha256: 2d740ecfaa6591dcf014570a322192dd022f169bcca80849c41801ff496a866a
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_3.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_3.npy
+  - name: embeddings/cp_codec_embedding_4.npy
+    sha256: 3b466f7d3213b7a8b29381ee47338a9ac4de30460ac3d2defdaceaa0bab657e2
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_4.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_4.npy
+  - name: embeddings/cp_codec_embedding_5.npy
+    sha256: 494fde5327423a7462d5e3063dcd8f2ad87de411fe5093c587cf8e56b3ae53df
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_5.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_5.npy
+  - name: embeddings/cp_codec_embedding_6.npy
+    sha256: e6d6780db3685caee084edbce3b2517e5fa52b6a077890dff9c14b6638bfb564
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_6.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_6.npy
+  - name: embeddings/cp_codec_embedding_7.npy
+    sha256: 4d10c51b112e7188062a712e0d664a22dd448cea52ed102e094943c871ec3577
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_7.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_7.npy
+  - name: embeddings/cp_codec_embedding_8.npy
+    sha256: 3bc9ba51d40d91be04f478d9330363af3d1ac1218144e7bf0c8b920bd4d1832a
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_8.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_8.npy
+  - name: embeddings/cp_codec_embedding_9.npy
+    sha256: 41add7203fe62f322fa66ad353d5a91f265413a5c711681769d5979e526ced51
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_9.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_9.npy
+  - name: embeddings/cp_codec_embedding_10.npy
+    sha256: 0e6d1bd968d39d53064bf430a0117cd83d452ee3ecf78dbe2648ad4b783d9091
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_10.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_10.npy
+  - name: embeddings/cp_codec_embedding_11.npy
+    sha256: c9a1cb9ed2749c9f94fc29a939afdbb8ec341ba3f734c10b507f82a441a7c20e
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_11.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_11.npy
+  - name: embeddings/cp_codec_embedding_12.npy
+    sha256: 4cc774bda9a3b868461a36d08cd92370b71e162589598d1796b66fd1bb0520d1
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_12.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_12.npy
+  - name: embeddings/cp_codec_embedding_13.npy
+    sha256: bf0454c373ff115501d1642675125146e92d91703442ffdf87a35a7b4fe94919
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_13.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_13.npy
+  - name: embeddings/cp_codec_embedding_14.npy
+    sha256: 57cb0ce39de77611a7be8f3932debe3a2fa9eba9189e7b3fac890c482ce9a8ba
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_14.npy
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/embeddings/cp_codec_embedding_14.npy
+  # ONNX 模型文件（在根目录，无 fp32/int4 子目录）
+  - name: talker_prefill.onnx
+    sha256: cbd0bf1cd0ccc66a68d2238ae64622c6e033b7b50e1a0b7bc64d1758ec94c113
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/talker_prefill.onnx
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/talker_prefill.onnx
+  - name: talker_prefill.onnx.data
+    sha256: 389276b5ef745a38a5d9a5a4e5a39746ed590643f9cd3571eb8d6125c93bfd6e
+    size: 1774452736
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/talker_prefill.onnx.data
+      modelscope: https://www.modelscope.cn/models/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/talker_prefill.onnx.data
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/talker_prefill.onnx.data
+  - name: talker_decode.onnx
+    sha256: 1a0ba437c0c39a011eddfbb43e2838e8eadfcc46021b2cdd5c7d562597935296
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/talker_decode.onnx
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/talker_decode.onnx
+  - name: talker_decode.onnx.data
+    sha256: 389276b5ef745a38a5d9a5a4e5a39746ed590643f9cd3571eb8d6125c93bfd6e
+    size: 1774452736
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/talker_decode.onnx.data
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/talker_decode.onnx.data
+  - name: code_predictor.onnx
+    sha256: 4e741d1e16ba61ca446b060b16d2da9519b11d18aae5d7bbbfcd273745a38225
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/code_predictor.onnx
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/code_predictor.onnx
+  - name: vocoder.onnx
+    sha256: 4ee20178c7ab322891ce412d92edcfbade2e5e94a8cffe054e17b760fc764e45
+    required: true
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/vocoder.onnx
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/vocoder.onnx
+  - name: vocoder.onnx.data
+    sha256: f4cd93d2b48b833a6aaca7d5a3c95dd99853baba565514cb91777e3ce3c4cc8d
+    size: 456261632
+    sources:
+      huggingface: https://huggingface.co/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/vocoder.onnx.data
+      modelscope: https://www.modelscope.cn/models/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/vocoder.onnx.data
+      hf-mirror: https://hf-mirror.com/elbruno/Qwen3-TTS-12Hz-0.6B-CustomVoice-ONNX/resolve/main/vocoder.onnx.data

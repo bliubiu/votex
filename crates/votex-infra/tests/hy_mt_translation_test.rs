@@ -42,7 +42,7 @@ fn load_hy_mt() -> HyMtProvider {
         "分词器文件不存在"
     );
 
-    let mut engine = HyMtProvider::new();
+    let engine = HyMtProvider::new();
     engine
         .load_from_dir(&model_dir)
         .unwrap_or_else(|e| panic!("加载 HY-MT1.5 模型失败: {}", e));
@@ -51,6 +51,7 @@ fn load_hy_mt() -> HyMtProvider {
 
 // ===================== 文件存在性测试 =====================
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test hy_mt_translation_test --features slow-models")]
 #[test]
 fn test_hy_mt_model_files_exist() {
     let model_dir = hy_mt_model_dir();
@@ -74,6 +75,7 @@ fn test_hy_mt_model_files_exist() {
     }
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test hy_mt_translation_test --features slow-models")]
 #[test]
 fn test_hy_mt_load_model() {
     if !model_files_ready() {
@@ -86,6 +88,7 @@ fn test_hy_mt_load_model() {
 
 // ===================== 翻译推理测试 =====================
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test hy_mt_translation_test --features slow-models")]
 #[test]
 fn test_hy_mt_translate_zh_en() {
     if !model_files_ready() {
@@ -107,6 +110,7 @@ fn test_hy_mt_translate_zh_en() {
     println!("✓ zh→en 翻译完成");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test hy_mt_translation_test --features slow-models")]
 #[test]
 fn test_hy_mt_translate_en_zh() {
     if !model_files_ready() {
@@ -128,6 +132,7 @@ fn test_hy_mt_translate_en_zh() {
     println!("✓ en→zh 翻译完成");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test hy_mt_translation_test --features slow-models")]
 #[test]
 fn test_hy_mt_empty_text_should_error() {
     if !model_files_ready() {
@@ -141,6 +146,7 @@ fn test_hy_mt_empty_text_should_error() {
     println!("✓ 空文本正确返回错误");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test hy_mt_translation_test --features slow-models")]
 #[test]
 fn test_hy_mt_translate_sentence() {
     if !model_files_ready() {
@@ -162,6 +168,7 @@ fn test_hy_mt_translate_sentence() {
     println!("✓ 长句翻译完成");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test hy_mt_translation_test --features slow-models")]
 #[test]
 fn test_hy_mt_translate_paragraph() {
     if !model_files_ready() {

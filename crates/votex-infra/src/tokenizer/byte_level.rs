@@ -127,10 +127,7 @@ mod tests {
 
     /// 定位 CosyVoice 模型目录（仅测试用；模型缺失则跳过）
     fn cosyvoice_dir() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("models")
+        crate::shared::WorkspacePaths::models_dir()
             .join("tts")
             .join("cosyvoice")
     }

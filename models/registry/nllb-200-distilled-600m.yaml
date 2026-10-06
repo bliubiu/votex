@@ -1,0 +1,50 @@
+id: nllb-200-distilled-600m
+name: NLLB-200 Distilled 600M
+kind: Translation
+engine: Nllb
+
+# 运行时实际加载的文件（nllb.rs:124-143）：
+#   sentencepiece.bpe.model / encoder_model_int8.onnx / decoder_model_int8.onnx
+#   （int8 存在时优先，否则回落 fp32 的 encoder_model.onnx / decoder_model.onnx）
+#
+# 重要：int8 文件名用【下划线】_int8，不是【点号】.int8 —— 原 registry 写成
+# `encoder_model.int8.onnx` 与磁盘、与代码期望三方不符，会导致 `model verify`
+# 误报缺失。fp32 的 encoder_model.onnx / decoder_model.onnx 本机未部署（走 int8 分支），
+# 故不再声明；tokenizer.json 运行时从不读取（只加载 sentencepiece.bpe.model），一并移除。
+#
+# 分词器：HuggingFace NllbTokenizer 重排了特殊 token（<s>=0,<pad>=1,</s>=2,<unk>=3），
+# 与原始 SentencePiece 模型 token ID 偏移 +1：原始 SP ID 3 → HF ID 4 ... 255999 → 256000。
+# 偏移量与语言代码 ID 映射用 added_tokens 声明在下方。
+tokenizer:
+  type: sentencepiece
+  id_offset: 1
+  eos_on_input: true
+  decoder_start_token: eos
+  added_tokens:
+    eng_Latn: 256047
+    zho_Hans: 256200
+    zho_Hant: 256201
+
+files:
+  # INT8 量化版（本机实际部署，~1.8GB）
+  - name: encoder_model_int8.onnx
+    sha256: da9234723304e9f76216b67a43ede4fe65393cbf5942a7e4a84595782a4bc161
+    sources:
+      huggingface: https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/main/onnx/encoder_model_int8.onnx
+      hf-mirror: https://hf-mirror.com/Xenova/nllb-200-distilled-600M/resolve/main/onnx/encoder_model_int8.onnx
+  - name: decoder_model_int8.onnx
+    sha256: 34765d44fe475f81b98efa2f7452bc742f7fdfb6b553af18a23ae6ee5ee92049
+    sources:
+      huggingface: https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/main/onnx/decoder_model_int8.onnx
+      hf-mirror: https://hf-mirror.com/Xenova/nllb-200-distilled-600M/resolve/main/onnx/decoder_model_int8.onnx
+  # 分词器
+  - name: sentencepiece.bpe.model
+    sha256: 14bb8dfb35c0ffdea7bc01e56cea38b9e3d5efcdcb9c251d6b40538e1aab555a
+    sources:
+      huggingface: https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/main/sentencepiece.bpe.model
+      hf-mirror: https://hf-mirror.com/Xenova/nllb-200-distilled-600M/resolve/main/sentencepiece.bpe.model
+  - name: config.json
+    sha256: 52f035acb54ac80e5ef7fe78d6967f8ddf8e8799f078d1a92a2c8168d8ff4a20
+    sources:
+      huggingface: https://huggingface.co/Xenova/nllb-200-distilled-600M/resolve/main/config.json
+      hf-mirror: https://hf-mirror.com/Xenova/nllb-200-distilled-600M/resolve/main/config.json

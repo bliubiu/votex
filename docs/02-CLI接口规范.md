@@ -30,7 +30,7 @@ votex tts --input <文件> --output <文件> [选项]
 |------|------|------|------|
 | `--input` / `-i` | 路径(必填) | 输入 TXT 文本文件路径 | `-i ./novel.txt` |
 | `--output` / `-o` | 路径(必填) | 输出音频文件路径（由扩展名推断格式；无扩展名时使用配置文件默认格式） | `-o ./output.wav` |
-| `--engine` | 枚举 | TTS 引擎：`kokoro` / `indextts2`，默认 `kokoro` | `--engine indextts2` |
+| `--engine` | 枚举 | TTS 引擎：`kokoro` / `indextts25`，默认 `kokoro` | `--engine indextts25` |
 | `--voice` | 字符串 | 音色名称，依赖引擎 | `--voice "xiaobei"` |
 | `--speed` | 浮点 | 语速 0.5 ~ 2.0，默认 1.0 | `--speed 1.2` |
 | `--pitch` | 整数 | 音调 -20 ~ +20，默认 0 | `--pitch 5` |
@@ -56,7 +56,7 @@ votex tts -i novel.txt -o output.mp3
 votex tts -i story.txt -o chapter1.wav --voice "xiaobei" --speed 1.3 --bitrate 256
 
 # 使用 IndexTTS2 引擎 + 粤语音色
-votex tts -i cantonese.txt -o output.mp3 --engine indextts2 --voice "yue-female"
+votex tts -i cantonese.txt -o output.mp3 --engine indextts25 --voice default
 
 # 长文本分段 + 自定义停顿
 votex tts -i long_novel.txt -o audiobook.mp3 --segment-size 800 --segment-silence 500
@@ -154,7 +154,7 @@ votex model <子命令> [选项]
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `--type` | 枚举 | 模型类型过滤：`tts` / `asr` / `all`，默认 `all` |
-| `--engine` | 枚举 | TTS 引擎过滤：`kokoro` / `indextts2`（仅 `--type tts` 时有效） |
+| `--engine` | 枚举 | TTS 引擎过滤：`kokoro` / `indextts25`（仅 `--type tts` 时有效） |
 
 #### 示例
 
@@ -172,7 +172,7 @@ votex model download kokoro-82m
 votex model download whisper-base
 
 # 下载 IndexTTS2 模型
-votex model download indextts2
+votex model download indextts25
 
 # 手动导入本地模型
 votex model import ./whisper-base-q5_1.gguf
@@ -189,7 +189,7 @@ votex model remove whisper-base
 | 模型名 | 类型 | 引擎 | 说明 |
 |--------|------|------|------|
 | `kokoro-82m` | TTS | Kokoro | 普通话 8 种音色 |
-| `indextts2` | TTS | IndexTTS2 | 普通话 + 粤语 + 闽南语 |
+| `indextts25` | TTS | IndexTTS-2.5 | 普通话 + 粤语（原生） |
 | `whisper-base` | ASR | Whisper | 基础模型，140MB |
 | `whisper-small` | ASR | Whisper | 高精度模型，460MB |
 
@@ -207,7 +207,7 @@ votex batch-tts --input-dir <目录> --output-dir <目录> [选项]
 |------|------|------|------|
 | `--input-dir` / `-i` | 路径(必填) | 包含 TXT 文件的输入目录 | `-i ./novels/` |
 | `--output-dir` / `-o` | 路径(必填) | 输出音频文件目录 | `-o ./output/` |
-| `--engine` | 枚举 | TTS 引擎：`kokoro` / `indextts2` | `--engine indextts2` |
+| `--engine` | 枚举 | TTS 引擎：`kokoro` / `indextts25` | `--engine indextts25` |
 | `--voice` | 字符串 | 音色名称 | `--voice "xiaobei"` |
 | `--speed` | 浮点 | 语速 0.5 ~ 2.0 | `--speed 1.2` |
 | `--pitch` | 整数 | 音调 -20 ~ +20 | `--pitch 5` |
@@ -224,7 +224,7 @@ votex batch-tts --input-dir <目录> --output-dir <目录> [选项]
 votex batch-tts -i ./novels/ -o ./audiobooks/ --voice "xiaobei"
 
 # 递归扫描子目录
-votex batch-tts -i ./novels/ -o ./audiobooks/ --recursive --engine indextts2
+votex batch-tts -i ./novels/ -o ./audiobooks/ --recursive --engine indextts25
 ```
 
 #### 5.2 批量 ASR

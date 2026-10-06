@@ -41,8 +41,6 @@ use crate::shared::{EngineState, OrtSessionFactory};
 
 // ===================== 特殊 Token ID（HY-MT1.5 配置值） =====================
 
-#[allow(dead_code)]
-const BOS_TOKEN_ID: i64 = 120_000;
 const EOS_TOKEN_ID: i64 = 120_020;
 const PAD_TOKEN_ID: i64 = 120_002;
 const VOCAB_SIZE: usize = 120_818;
@@ -56,7 +54,11 @@ const HEAD_DIM: usize = 128;
 /// HY-MT1.5 Decoder-only ONNX 翻译引擎
 pub struct HyMtProvider {
     state: EngineState<Session>,
-    tokenizer: Option<tokenizers::Tokenizer>,
+    /// HuggingFace tokenizers 分词器
+    ///
+    /// 走 `EngineState`：`TranslationProvider::load` 是 `&self`，
+    /// 裸 `Option` 无法在共享实例上写入。
+    tokenizer: EngineState<tokenizers::Tokenizer>,
     max_length: usize,
     /// 少数民族语言支持（藏/维/蒙/壮/彝）
     minority_langs: Vec<String>,
@@ -66,7 +68,7 @@ impl HyMtProvider {
     pub fn new() -> Self {
         Self {
             state: EngineState::new(),
-            tokenizer: None,
+            tokenizer: EngineState::new(),
             max_length: MAX_LENGTH,
             minority_langs: vec![
                 "bo".into(), // 藏语
@@ -89,7 +91,7 @@ impl HyMtProvider {
     /// 加载策略：
     /// 1. 优先尝试 `model_q4.onnx`（int4 量化，最小体积）
     /// 2. 回退到 `model.onnx`（FP32 完整版）
-    pub fn load_from_dir(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    pub fn load_from_dir(&self, model_dir: &Path) -> Result<(), TranslationError> {
         // 优先加载 Q4 量化模型（CPU 友好）
         let model_path = if model_dir.join("model_q4.onnx").exists() {
             tracing::info!("HY-MT1.5: 使用 Q4 量化模型");
@@ -110,7 +112,7 @@ impl HyMtProvider {
         if tokenizer_path.exists() {
             let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
                 .map_err(|e| TranslationError::ApiError(format!("加载 tokenizer 失败: {}", e)))?;
-            self.tokenizer = Some(tokenizer);
+            self.tokenizer.load(tokenizer);
         } else {
             return Err(TranslationError::ModelNotLoaded);
         }
@@ -175,9 +177,11 @@ impl HyMtProvider {
         direction: &TranslationDirection,
         glossary_text: Option<&str>,
     ) -> Result<String, TranslationError> {
-        let tokenizer = self
-            .tokenizer
+        // 守卫必须活到推理与解码结束。
+        let tokenizer_guard = self.tokenizer.get();
+        let tokenizer = tokenizer_guard
             .as_ref()
+            .and_then(|g| g.as_ref())
             .ok_or(TranslationError::ModelNotLoaded)?;
 
         // 确定源语言和目标语言
@@ -335,16 +339,16 @@ impl TranslationProvider for HyMtProvider {
         self.translate_internal(text, &direction)
     }
 
-    fn load(&mut self, model_dir: &Path) -> Result<(), TranslationError> {
+    fn load(&self, model_dir: &Path) -> Result<(), TranslationError> {
         self.load_from_dir(model_dir)
     }
 
-    fn unload(&mut self) {
+    fn unload(&self) {
         self.state.unload();
     }
 
     fn is_loaded(&self) -> bool {
-        self.state.is_loaded() && self.tokenizer.is_some()
+        self.state.is_loaded() && self.tokenizer.is_loaded()
     }
 
     fn max_input_chars(&self) -> usize {

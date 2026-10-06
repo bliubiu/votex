@@ -1,0 +1,41 @@
+id: kokoro-82m
+name: Kokoro-82M
+kind: Tts
+engine: Kokoro
+files:
+  # 运行时模型文件名：kokoro.rs:305-311 的候选顺序为
+  # kokoro-v1.0.int8.onnx > kokoro.onnx > kokoro-fp16.onnx > model.onnx > model_uint8.onnx > model_fp16.onnx
+  # 上游量化权重名为 model_quantized.onnx，落盘名统一为 model.onnx（与磁盘现状一致）
+  - name: model.onnx
+    sha256: 53a71ac22a70778d57162e4f92eafc62852d9e04a4460b20638d2424796e6037
+    sources:
+      modelscope: https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/master/onnx/model_quantized.onnx
+      github: https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx
+      huggingface: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/main/onnx/model_quantized.onnx
+      hf-mirror: https://hf-mirror.com/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/main/onnx/model_quantized.onnx
+  - name: config.json
+    sha256: df34b4f930b23447cd4dc410fabfb42eb3f24e803e6c3f97d618fb359380a36f
+    sources:
+      modelscope: https://modelscope.cn/models/hexgrad/Kokoro-82M/resolve/main/config.json
+      huggingface: https://huggingface.co/hexgrad/Kokoro-82M/resolve/main/config.json
+      hf-mirror: https://hf-mirror.com/hexgrad/Kokoro-82M/resolve/main/config.json
+  # 注：上游 kokoro-onnx 的默认女声文件名就是 af.bin（不存在 af_heart.bin）
+  # 另注：所有音色文件须为 130560*4 = 522240 字节，运行时 kokoro.rs:237 硬校验
+  - name: voices/af.bin
+    sha256: a4f11d9d055a12bfa0db2668a3e4f0ef8fd1f1ccca69494479718e44dbf9e41a
+    sources:
+      modelscope: https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/master/voices/af.bin
+      huggingface: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/main/voices/af.bin
+      hf-mirror: https://hf-mirror.com/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/main/voices/af.bin
+  - name: voices/af_bella.bin
+    sha256: 38e12d4b9b31a751282ab9154fb083dad3df3a749772687cde7873da107160fa
+    sources:
+      modelscope: https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/master/voices/af_bella.bin
+      huggingface: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/main/voices/af_bella.bin
+      hf-mirror: https://hf-mirror.com/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/main/voices/af_bella.bin
+  - name: voices/am_adam.bin
+    sha256: 6d5255a4b4803f594bfa0c0d7539c4d8bb0829c7f190f0f6a8fa0afa0023b6e4
+    sources:
+      modelscope: https://modelscope.cn/models/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/master/voices/am_adam.bin
+      huggingface: https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/main/voices/am_adam.bin
+      hf-mirror: https://hf-mirror.com/onnx-community/Kokoro-82M-v1.0-ONNX-timestamped/resolve/main/voices/am_adam.bin

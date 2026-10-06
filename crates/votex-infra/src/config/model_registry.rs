@@ -63,6 +63,26 @@ impl ModelRegistryLoader {
         entries.sort_by(|a, b| a.id.cmp(&b.id));
 
         tracing::info!("已加载 {} 个模型清单", entries.len());
+
+        // 完整性校验覆盖率统计
+        //
+        // 模型文件一旦缺少 SHA256，下载后就无法验证是否被镜像源投毒 / 传输截断，
+        // 而损坏或被篡改的 ONNX 会被直接加载执行（本项目存在 unsafe mmap 路径），
+        // 构成供应链风险。因此这里显式告警，推动清单逐步补齐校验值。
+        let total_files: usize = entries.iter().map(|e| e.files.len()).sum();
+        let no_sha256: usize = entries
+            .iter()
+            .flat_map(|e| e.files.iter())
+            .filter(|f| f.sha256.as_deref().unwrap_or("").trim().is_empty())
+            .count();
+        if total_files > 0 && no_sha256 > 0 {
+            tracing::warn!(
+                "模型清单完整性校验覆盖不足：{}/{} 个文件缺少 SHA256，下载后将无法校验完整性",
+                no_sha256,
+                total_files
+            );
+        }
+
         Ok(entries)
     }
 

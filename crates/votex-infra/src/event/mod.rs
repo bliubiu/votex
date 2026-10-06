@@ -1,12 +1,22 @@
-use std::sync::Mutex;
+//! 事件基础设施：同步事件总线。
+//!
+//! `publish` 必须「锁内快照处理器列表、锁外回调」—— 锁内回调会在处理器
+//! 反向注册/注销时自死锁，并把锁毒化扩散到全局。
+
+use std::sync::{Arc, Mutex};
 use votex_domain::event::{DomainEvent, EventBus};
+
+/// 事件处理器类型
+///
+/// 使用 `Arc` 而非 `Box`，以便在发布时克隆出快照、在锁外回调
+type Handler = Arc<dyn Fn(DomainEvent) + Send + Sync>;
 
 /// 同步事件总线
 ///
 /// 存储一组事件处理器，发布事件时同步调用所有处理器。
 /// 适用于 CLI 模式，不依赖异步运行时。
 pub struct SyncEventBus {
-    handlers: Mutex<Vec<Box<dyn Fn(DomainEvent) + Send + Sync>>>,
+    handlers: Mutex<Vec<Handler>>,
 }
 
 impl SyncEventBus {
@@ -33,21 +43,20 @@ impl SyncEventBus {
     where
         F: Fn(DomainEvent) + Send + Sync + 'static,
     {
-        let mut handlers = self.handlers.lock().expect("获取事件处理器锁失败");
-        handlers.push(Box::new(handler));
+        // 锁中毒时恢复使用：一次 handler panic 不应让事件总线永久不可用
+        let mut handlers = self.handlers.lock().unwrap_or_else(|e| e.into_inner());
+        handlers.push(Arc::new(handler));
     }
 
     /// 清空所有处理器
-    #[allow(dead_code)]
-    pub fn clear(&self) {
-        let mut handlers = self.handlers.lock().expect("获取事件处理器锁失败");
+        pub fn clear(&self) {
+        let mut handlers = self.handlers.lock().unwrap_or_else(|e| e.into_inner());
         handlers.clear();
     }
 
     /// 获取处理器数量
-    #[allow(dead_code)]
-    pub fn handler_count(&self) -> usize {
-        let handlers = self.handlers.lock().expect("获取事件处理器锁失败");
+        pub fn handler_count(&self) -> usize {
+        let handlers = self.handlers.lock().unwrap_or_else(|e| e.into_inner());
         handlers.len()
     }
 }
@@ -60,9 +69,21 @@ impl Default for SyncEventBus {
 
 impl EventBus for SyncEventBus {
     /// 发布事件，同步调用所有已注册的处理器
+    ///
+    /// **关键约束：锁内只取快照，锁外才回调。**
+    ///
+    /// 若在持锁状态下调用 handler 会有两个严重后果：
+    /// 1. 任何 handler 内部再调用 `subscribe()`（GUI 中很常见：响应 A 事件后
+    ///    注册 B 的回调）会立即**自死锁**
+    /// 2. 任一 handler panic 会毒化该互斥锁，之后 `publish` / `subscribe` /
+    ///    `handler_count` 全部 panic，整个应用不可恢复
     fn publish(&self, event: DomainEvent) {
-        let handlers = self.handlers.lock().expect("获取事件处理器锁失败");
-        for handler in handlers.iter() {
+        let snapshot: Vec<Handler> = {
+            let handlers = self.handlers.lock().unwrap_or_else(|e| e.into_inner());
+            handlers.iter().map(Arc::clone).collect()
+        };
+
+        for handler in snapshot {
             handler(event.clone());
         }
     }

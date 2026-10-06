@@ -1,11 +1,17 @@
+//! OCR 子命令
+//!
+//! 依赖说明：仅通过 `votex-app` 用例与仓储 trait 工作，
+//! 不感知 SQLite，也不感知 `votex-infra`。
+
 use anyhow::Result;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
-use rusqlite::Connection;
+use std::sync::Arc;
 use votex_app::use_case::ocr_use_case::OcrUseCase;
 use votex_domain::repository::OcrTaskRepository;
 use votex_domain::shared::value_object::TaskId;
-use votex_infra::persistence::ocr_repo::SqliteOcrTaskRepository;
+
+/// OCR 任务仓储（数据库不可用时为 `None`）
+pub type SharedOcrRepo = Option<Arc<dyn OcrTaskRepository>>;
 
 /// 执行单图 OCR 识别
 pub fn run_ocr(
@@ -15,7 +21,7 @@ pub fn run_ocr(
     no_cls: bool,
     engine: &str,
     models_dir: &Path,
-    db_conn: Option<Arc<Mutex<Connection>>>,
+    repo: SharedOcrRepo,
 ) -> Result<()> {
     let input_path = Path::new(input);
     if !input_path.exists() {
@@ -25,10 +31,9 @@ pub fn run_ocr(
     // 初始化 UseCase
     let mut use_case = OcrUseCase::new();
 
-    // 如果指定了数据库连接，启用持久化
-    if let Some(conn) = db_conn {
-        let repo = SqliteOcrTaskRepository::new(conn);
-        use_case = use_case.with_repo(Arc::new(repo));
+    // 如果提供了仓储，启用持久化
+    if let Some(repo) = repo {
+        use_case = use_case.with_repo(repo);
     }
 
     // 加载引擎（统一传入 models/ 目录，引擎会自动定位子目录）
@@ -69,6 +74,8 @@ pub fn run_ocr(
 }
 
 /// 执行批量 OCR 识别
+///
+/// `repo` 为 `None` 时不持久化，进度仅打印。
 pub fn run_batch_ocr(
     inputs: &[String],
     output_dir: &str,
@@ -77,33 +84,7 @@ pub fn run_batch_ocr(
     engine: &str,
     max_concurrency: usize,
     models_dir: &Path,
-) -> Result<()> {
-    run_batch_ocr_inner(inputs, output_dir, format, no_cls, engine, max_concurrency, models_dir, None)
-}
-
-/// 执行批量 OCR 识别（带持久化）
-pub fn run_batch_ocr_with_repo(
-    inputs: &[String],
-    output_dir: &str,
-    format: &str,
-    no_cls: bool,
-    engine: &str,
-    max_concurrency: usize,
-    models_dir: &Path,
-    repo: SqliteOcrTaskRepository,
-) -> Result<()> {
-    run_batch_ocr_inner(inputs, output_dir, format, no_cls, engine, max_concurrency, models_dir, Some(repo))
-}
-
-fn run_batch_ocr_inner(
-    inputs: &[String],
-    output_dir: &str,
-    format: &str,
-    no_cls: bool,
-    engine: &str,
-    max_concurrency: usize,
-    models_dir: &Path,
-    repo: Option<SqliteOcrTaskRepository>,
+    repo: SharedOcrRepo,
 ) -> Result<()> {
     let output_path = Path::new(output_dir);
 
@@ -117,7 +98,7 @@ fn run_batch_ocr_inner(
     let mut use_case = OcrUseCase::new();
 
     if let Some(repo) = repo {
-        use_case = use_case.with_repo(Arc::new(repo));
+        use_case = use_case.with_repo(repo);
     }
 
     use_case.load_engine(models_dir, engine)?;
@@ -143,9 +124,16 @@ fn run_batch_ocr_inner(
 }
 
 /// 列出现有 OCR 任务
-pub fn list_ocr_tasks(conn: Arc<Mutex<Connection>>) -> Result<()> {
-    let repo = SqliteOcrTaskRepository::new(conn);
-    let tasks = OcrUseCase::list_tasks(&repo);
+pub fn list_ocr_tasks(repo: SharedOcrRepo) -> Result<()> {
+    let repo = match repo {
+        Some(r) => r,
+        None => {
+            tracing::warn!("数据库不可用，无法列出 OCR 任务");
+            return Ok(());
+        }
+    };
+
+    let tasks = OcrUseCase::list_tasks(repo.as_ref());
 
     if tasks.is_empty() {
         println!("暂无 OCR 任务记录");
@@ -170,10 +158,18 @@ pub fn list_ocr_tasks(conn: Arc<Mutex<Connection>>) -> Result<()> {
 }
 
 /// 查看 OCR 任务详情
-pub fn show_ocr_task(conn: Arc<Mutex<Connection>>, task_id_str: &str) -> Result<()> {
-    let repo = SqliteOcrTaskRepository::new(conn);
+pub fn show_ocr_task(repo: SharedOcrRepo, task_id_str: &str) -> Result<()> {
+    let repo = match repo {
+        Some(r) => r,
+        None => {
+            tracing::warn!("数据库不可用，无法查看 OCR 任务");
+            return Ok(());
+        }
+    };
+
     let task_id = TaskId::from_string(task_id_str.to_string());
-    let task = repo.find_by_id(&task_id)
+    let task = repo
+        .find_by_id(&task_id)
         .ok_or_else(|| anyhow::anyhow!("任务不存在: {}", task_id_str))?;
 
     println!("OCR 任务详情:");
@@ -189,8 +185,8 @@ pub fn show_ocr_task(conn: Arc<Mutex<Connection>>, task_id_str: &str) -> Result<
             votex_domain::ocr::value_object::PageStatus::Completed => "已完成",
             votex_domain::ocr::value_object::PageStatus::Failed(msg) => {
                 // 截断长错误
-                if msg.len() > 30 {
-                    &msg[..30]
+                if msg.chars().count() > 30 {
+                    &msg.chars().take(30).collect::<String>()
                 } else {
                     msg.as_str()
                 }
@@ -210,10 +206,17 @@ pub fn show_ocr_task(conn: Arc<Mutex<Connection>>, task_id_str: &str) -> Result<
 }
 
 /// 删除 OCR 任务
-pub fn delete_ocr_task(conn: Arc<Mutex<Connection>>, task_id_str: &str) -> Result<()> {
-    let repo = SqliteOcrTaskRepository::new(conn);
+pub fn delete_ocr_task(repo: SharedOcrRepo, task_id_str: &str) -> Result<()> {
+    let repo = match repo {
+        Some(r) => r,
+        None => {
+            tracing::warn!("数据库不可用，无法删除 OCR 任务");
+            return Ok(());
+        }
+    };
+
     let task_id = TaskId::from_string(task_id_str.to_string());
-    OcrUseCase::delete_task(&repo, &task_id)?;
+    OcrUseCase::delete_task(repo.as_ref(), &task_id)?;
     println!("OCR 任务已删除: {}", task_id_str);
     Ok(())
 }

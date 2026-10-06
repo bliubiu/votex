@@ -20,7 +20,7 @@ impl FileModelRepo {
 
 impl ModelRepository for FileModelRepo {
     fn find_by_id(&self, id: &ModelId) -> Option<Model> {
-        self.models.lock().ok()?.get(id).cloned()
+        crate::persistence::guard::lock(&self.models).get(id).cloned()
     }
 
     fn find_by_kind(&self, kind: ModelKind) -> Vec<Model> {
@@ -81,6 +81,8 @@ impl SqliteModelRepository {
             ModelKind::Asr => "Asr",
             ModelKind::Ocr => "Ocr",
             ModelKind::Translation => "Translation",
+            // 运行时依赖（如 ORT 动态库）也走同一张表登记，便于统一查询
+            ModelKind::Runtime => "Runtime",
         }
     }
 
@@ -101,14 +103,14 @@ impl SqliteModelRepository {
 
     /// 列出所有模型
     pub fn list_all(&self) -> Vec<Model> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
         let mut stmt = match conn.prepare("SELECT data_json FROM models") {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("model_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map([], |row| {
@@ -117,18 +119,27 @@ impl SqliteModelRepository {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("model_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("model_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 }
 
 impl ModelRepository for SqliteModelRepository {
     fn find_by_id(&self, id: &ModelId) -> Option<Model> {
-        let conn = self.conn.lock().ok()?;
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
         let id_str = id.as_str();
-        conn.query_row(
+        match conn.query_row(
             "SELECT data_json FROM models WHERE id = ?1",
             rusqlite::params![id_str],
             |row| {
@@ -136,20 +147,28 @@ impl ModelRepository for SqliteModelRepository {
                 serde_json::from_str::<Model>(&json)
                     .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
             },
-        )
-        .ok()
+        ) {
+            // 区分「查不到行」与「查询出错」——后者必须留痕，
+            // 否则调用方会误判为任务不存在而重复创建
+            Ok(v) => Some(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => {
+                crate::persistence::guard::log_err("models.find_by_id", &e);
+                None
+            }
+        }
     }
 
     fn find_by_kind(&self, kind: ModelKind) -> Vec<Model> {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return Vec::new(),
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
         let kind_str = Self::kind_to_str(&kind);
         let mut stmt = match conn.prepare("SELECT data_json FROM models WHERE kind = ?1") {
             Ok(s) => s,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("model_repo", &e);
+                return Vec::new();
+            }
         };
 
         let rows = match stmt.query_map(rusqlite::params![kind_str], |row| {
@@ -158,10 +177,19 @@ impl ModelRepository for SqliteModelRepository {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
         }) {
             Ok(r) => r,
-            Err(_) => return Vec::new(),
+            Err(e) => {
+                crate::persistence::guard::log_err("model_repo", &e);
+                return Vec::new();
+            }
         };
 
-        rows.filter_map(|r| r.ok()).collect()
+        rows.filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                crate::persistence::guard::log_err("model_repo 行解析", &e);
+                None
+            }
+        }).collect()
     }
 
     fn save(&self, model: &Model) -> Result<(), DomainError> {
@@ -201,10 +229,7 @@ impl ModelRepository for SqliteModelRepository {
     }
 
     fn exists(&self, id: &ModelId) -> bool {
-        let conn = match self.conn.lock() {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
+        let conn = crate::persistence::guard::lock_conn(&self.conn);
 
         let id_str = id.as_str();
         conn.query_row(

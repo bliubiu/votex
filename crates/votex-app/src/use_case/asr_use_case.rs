@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use votex_domain::asr::provider::AsrProvider;
 use votex_domain::asr::value_object::{
     AsrParams, AsrResult, DenoiseLevel, Language, SliceLength, SubtitleEntry, SubtitleFormat,
@@ -52,26 +53,31 @@ impl AsrUseCase {
     }
 
     /// 根据引擎类型获取对应 Provider 的可变引用
-    fn get_provider_mut(&mut self, engine: EngineKind) -> Result<&mut dyn AsrProvider> {
+    fn get_provider_mut(&self, engine: EngineKind) -> Result<&dyn AsrProvider> {
         match engine {
-            EngineKind::Whisper => Ok(&mut self.whisper),
-            EngineKind::SenseVoice => Ok(&mut self.sensevoice),
-            EngineKind::Paraformer => Ok(&mut self.paraformer),
-            EngineKind::Qwen3Asr => Ok(&mut self.qwen3_asr),
-            EngineKind::FireRedAsr => Ok(&mut self.firered_asr),
-            EngineKind::WeNet => Ok(&mut self.wenet),
+            EngineKind::Whisper => Ok(&self.whisper),
+            EngineKind::SenseVoice => Ok(&self.sensevoice),
+            EngineKind::Paraformer => Ok(&self.paraformer),
+            EngineKind::Qwen3Asr => Ok(&self.qwen3_asr),
+            EngineKind::FireRedAsr => Ok(&self.firered_asr),
+            EngineKind::WeNet => Ok(&self.wenet),
             _ => anyhow::bail!("不支持的 ASR 引擎: {:?}", engine),
         }
     }
 
     /// 执行 ASR 识别
+    ///
+    /// `cancel` — 可选取消令牌。长音频会被切成多段逐段识别，
+    /// 每个切片边界都会检查该标志；置 true 即中断并返回错误。
+    /// 传 `None` 表示不可取消（CLI 一次性调用场景）。
     pub fn recognize(
-        &mut self,
+        &self,
         input_path: &Path,
         output_path: &Path,
         model_id: &str,
         language: &str,
         format: &str,
+        cancel: Option<&AtomicBool>,
     ) -> Result<AsrResult> {
         if !input_path.exists() {
             anyhow::bail!("输入文件不存在: {:?}", input_path);
@@ -109,19 +115,28 @@ impl AsrUseCase {
         let mut offset_ms: u64 = 0;
 
         for (i, slice) in slices.iter().enumerate() {
+            // 切片边界检查取消：长音频识别可能持续数分钟，
+            // 没有这个检查用户点「取消」后仍要等全程结束。
+            if let Some(flag) = cancel {
+                if flag.load(Ordering::SeqCst) {
+                    anyhow::bail!("任务已取消（已完成 {}/{} 段）", i, slices.len());
+                }
+            }
             tracing::info!("识别第 {}/{} 段", i + 1, slices.len());
             let output = provider.recognize(slice, &params)?;
 
+            let duration_ms = slice.duration_ms() as u64;
             if !output.text.is_empty() {
-                let duration_ms = slice.duration_ms() as u64;
                 all_entries.push(SubtitleEntry {
                     index: all_entries.len() + 1,
                     start_time: Timestamp::from_millis(offset_ms),
                     end_time: Timestamp::from_millis(offset_ms + duration_ms),
                     text: output.text,
                 });
-                offset_ms += duration_ms;
             }
+            // 时间轴推进必须无条件执行：静音/未检出文字的切片不累计偏移，
+            // 其后所有字幕时间戳会整体提前一个切片时长（docs/23 A2）
+            offset_ms += duration_ms;
         }
 
         // 写入字幕文件
@@ -139,6 +154,13 @@ impl AsrUseCase {
             subtitles: all_entries,
             output_path: output_path.to_path_buf(),
         })
+    }
+
+    /// 释放指定 ASR 引擎已加载的模型会话（真实释放内存）
+    pub fn unload(&self, engine: EngineKind) -> Result<()> {
+        self.get_provider(engine)?.unload()?;
+        tracing::info!("ASR 引擎 {:?} 会话已释放", engine);
+        Ok(())
     }
 
     /// 解析模型 ID 为 (Model, EngineKind)
@@ -178,27 +200,61 @@ impl AsrUseCase {
         }
     }
 
+    /// ASR 可经 ffmpeg 转码后识别的压缩音频格式
+    const FFMPEG_DECODABLE: &[&str] = &[
+        "mp3", "m4a", "m4b", "mp4", "flac", "aac", "ogg", "opus", "wma", "webm", "amr", "3gp",
+    ];
+
     /// 加载音频文件
+    ///
+    /// WAV 直接读取；MP3/M4A/FLAC 等压缩格式经 ffmpeg 转码为 WAV 后读取
+    /// （AGENTS.md 声明支持这些格式）；其余格式返回 VA004 错误——
+    /// 此前此处静默返回 5 秒静音并继续识别，产出与输入无关的垃圾结果。
     fn load_audio(path: &Path) -> Result<AudioData> {
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default();
         tracing::info!("加载音频文件: {:?} (格式: {})", path, ext);
 
-        match ext {
-            "wav" => {
-                let audio = votex_infra::audio::wav::read_wav(path)?;
-                tracing::info!(
-                    "音频信息: {}Hz, {}声道, {}ms",
-                    audio.sample_rate,
-                    audio.channels,
-                    audio.duration_ms()
-                );
-                Ok(audio)
+        let audio = match ext.as_str() {
+            "wav" => votex_infra::audio::wav::read_wav(path)?,
+            e if Self::FFMPEG_DECODABLE.contains(&e) => Self::load_audio_via_ffmpeg(path)?,
+            other => {
+                return Err(votex_domain::error::AsrError::UnsupportedFormat(other.to_string())
+                    .into());
             }
-            _ => {
-                tracing::warn!("不支持的格式 {}，返回静音", ext);
-                Ok(AudioData::silence(16000, 5000))
-            }
-        }
+        };
+        tracing::info!(
+            "音频信息: {}Hz, {}声道, {}ms",
+            audio.sample_rate,
+            audio.channels,
+            audio.duration_ms()
+        );
+        Ok(audio)
+    }
+
+    /// 经 ffmpeg 转码加载压缩音频：解码到临时 WAV，读取后即删
+    fn load_audio_via_ffmpeg(path: &Path) -> Result<AudioData> {
+        let encoder = votex_infra::audio::mp3::FfmpegEncoder::new()
+            .map_err(|e| votex_domain::error::AsrError::AudioExtractFailed(e.to_string()))?;
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_wav = std::env::temp_dir().join(format!(
+            "votex_asr_decode_{}_{}.wav",
+            std::process::id(),
+            unique
+        ));
+        let result = (|| {
+            encoder.decode_to_wav(path, &temp_wav)?;
+            votex_infra::audio::wav::read_wav(&temp_wav)
+        })();
+        let _ = std::fs::remove_file(&temp_wav);
+        result.map_err(|e| votex_domain::error::AsrError::AudioExtractFailed(e.to_string()).into())
     }
 
     /// 将音频按指定秒数分片
@@ -221,7 +277,7 @@ impl AsrUseCase {
     }
 
     /// 确保模型已加载
-    fn ensure_loaded(&mut self, model: &Model) -> Result<()> {
+    fn ensure_loaded(&self, model: &Model) -> Result<()> {
         let provider = self.get_provider_mut(model.engine)?;
         if !provider.is_loaded() {
             provider.load(model)?;

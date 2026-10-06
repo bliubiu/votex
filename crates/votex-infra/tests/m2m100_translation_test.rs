@@ -53,13 +53,14 @@ fn load_engine() -> M2m100Provider {
         "分词器文件不存在"
     );
 
-    let mut engine = M2m100Provider::new();
+    let engine = M2m100Provider::new();
     engine
         .load_from_dir(&dir)
         .unwrap_or_else(|e| panic!("加载 M2M-100 模型失败: {}", e));
     engine
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test m2m100_translation_test --features slow-models")]
 #[test]
 fn test_m2m100_model_files_exist() {
     let dir = model_dir();
@@ -79,6 +80,7 @@ fn test_m2m100_model_files_exist() {
     assert!(tokenizer_ok, "分词器文件不存在");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test m2m100_translation_test --features slow-models")]
 #[test]
 fn test_m2m100_load_model() {
     if !model_files_ready() {
@@ -89,6 +91,7 @@ fn test_m2m100_load_model() {
     println!("✓ M2M-100 模型加载成功");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test m2m100_translation_test --features slow-models")]
 #[test]
 fn test_m2m100_translate_zh_en() {
     if !model_files_ready() {
@@ -107,6 +110,7 @@ fn test_m2m100_translate_zh_en() {
     println!("✓ zh→en 翻译完成");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test m2m100_translation_test --features slow-models")]
 #[test]
 fn test_m2m100_translate_en_zh() {
     if !model_files_ready() {
@@ -125,6 +129,7 @@ fn test_m2m100_translate_en_zh() {
     println!("✓ en→zh 翻译完成");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test m2m100_translation_test --features slow-models")]
 #[test]
 fn test_m2m100_empty_text() {
     if !model_files_ready() {
@@ -137,6 +142,7 @@ fn test_m2m100_empty_text() {
     println!("✓ 空文本正确返回错误");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test m2m100_translation_test --features slow-models")]
 #[test]
 fn test_m2m100_translate_sentence() {
     if !model_files_ready() {
@@ -155,6 +161,7 @@ fn test_m2m100_translate_sentence() {
     println!("✓ 长句翻译完成");
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test m2m100_translation_test --features slow-models")]
 #[test]
 fn test_m2m100_translate_paragraph() {
     if !model_files_ready() {

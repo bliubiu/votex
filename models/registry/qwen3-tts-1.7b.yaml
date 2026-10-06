@@ -1,0 +1,140 @@
+id: qwen3-tts-1.7b
+name: Qwen3-TTS-1.7B (VoiceDesign, int4)
+kind: Tts
+engine: Qwen3Tts
+# 社区 ONNX 转换版本（int4 量化）：https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX
+# 基于 Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign 导出，VoiceDesign 模式（自然语言描述生成音色）
+#
+# 运行时实际加载的文件（qwen3_tts.rs）：
+#   config.json（:495，顶层优先，其次 embeddings/config.json）
+#   embeddings/text_embedding.npy（:326，mmap 懒加载）
+#   tokenizer/{tokenizer.json,vocab.json,merges.txt}（:425-432）
+#   int4/{talker_prefill,talker_decode,code_predictor,vocoder}.onnx（:703-749）
+#
+# 不声明的文件（代码从不读取，声明它们只会让 `model verify` 误报缺失）：
+#   speech_tokenizer/*（682MB safetensors）、int4/text_embed.onnx（204MB）、
+#   int4/residual_embed.onnx（44MB）、README.md、requirements.txt、generate_onnx.py
+files:
+  # 架构配置（talker/codec 维度、pad/bos/eos token id、语言 id 映射）
+  - name: config.json
+    sha256: a31bc3d9967a3f00057017f962ed77d7f20ed1a10635ec61a088e689448c14d7
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/config.json
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/config.json
+  # 文本分词器（BPE：vocab.json + merges.txt）
+  - name: tokenizer/tokenizer.json
+    sha256: 09267689b8362020b9763b65dd5be7e086b31e28d72e02837a9e781de9a91bc7
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/tokenizer.json
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/tokenizer.json
+  - name: tokenizer/vocab.json
+    sha256: ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/vocab.json
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/vocab.json
+  - name: tokenizer/merges.txt
+    sha256: 8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/merges.txt
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/merges.txt
+  - name: tokenizer/added_tokens.json
+    sha256: d7f75a97314f5a2c70018efccde8a1712364d1ee84d22623ca6390b8564b37c6
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/added_tokens.json
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/added_tokens.json
+  - name: tokenizer/special_tokens_map.json
+    sha256: 7b376c510ccf9d88bb9bbee41dfc5052122e16e0dec1124a8d8983c59259a9f3
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/special_tokens_map.json
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/special_tokens_map.json
+  - name: tokenizer/tokenizer_config.json
+    sha256: 678d3d97f7dc7c0c60f0212799349e980fdda686c73226781e1a9eda275360ae
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/tokenizer_config.json
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/tokenizer/tokenizer_config.json
+  # Embeddings（text_dim = 2048，与 0.6B 的 1024 不同）
+  - name: embeddings/text_embedding.npy
+    sha256: 843354d7f837c2f8ac1e0708320226a98bf4b03057e34da59f8ff6dd197b2054
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_embedding.npy
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_embedding.npy
+  - name: embeddings/talker_codec_embedding.npy
+    sha256: 1140e81db3203d0e9118569f264271174588115d29b257a6a857be5fd4692a2f
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/talker_codec_embedding.npy
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/talker_codec_embedding.npy
+  - name: embeddings/text_projection_fc1_weight.npy
+    sha256: 94b62d00b306c5db843ac86dc135354889a2ce40d7adce79ae23f63c3d6acf19
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_projection_fc1_weight.npy
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_projection_fc1_weight.npy
+  - name: embeddings/text_projection_fc1_bias.npy
+    sha256: 2ca292516e9574fa67e0174a49770051156246bb0679096f0514286091eea7c3
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_projection_fc1_bias.npy
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_projection_fc1_bias.npy
+  - name: embeddings/text_projection_fc2_weight.npy
+    sha256: 9f3205a265ffbf2c7e2a2f68f6c9a85913e14499a4225cf005ffd9f2613b597b
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_projection_fc2_weight.npy
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_projection_fc2_weight.npy
+  - name: embeddings/text_projection_fc2_bias.npy
+    sha256: fc5a6eae755bd96a9d8d0d36bb8dc63473e2146fb1d703f5e461a5fbcb70e522
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_projection_fc2_bias.npy
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/embeddings/text_projection_fc2_bias.npy
+  # int4 量化 ONNX（运行时按 int4/talker_prefill.onnx 存在与否判定变体，:703）
+  - name: int4/talker_prefill.onnx
+    sha256: 8deacf194b588e0ce36fa3ba46f7754807190d33872d451c2b8f5301356a5ab0
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/talker_prefill.onnx
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/talker_prefill.onnx
+  - name: int4/talker_prefill.onnx.data
+    sha256: df06bacf92ef2f5cd8b63840d39067593fecf6a22613ebff5a1ee0df2725080e
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/talker_prefill.onnx.data
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/talker_prefill.onnx.data
+  - name: int4/talker_decode.onnx
+    sha256: b19a61dcff0425e9f75fadf14f7cfb40ef3602ca652652d09a695a559ebbaaef
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/talker_decode.onnx
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/talker_decode.onnx
+  - name: int4/talker_decode.onnx.data
+    sha256: df06bacf92ef2f5cd8b63840d39067593fecf6a22613ebff5a1ee0df2725080e
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/talker_decode.onnx.data
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/talker_decode.onnx.data
+  - name: int4/code_predictor.onnx
+    sha256: 7fbf1d23c9d49a1f375cc2c936e2d9602c9ec2bf283ce940008349d5c68a661a
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/code_predictor.onnx
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/code_predictor.onnx
+  - name: int4/code_predictor.onnx.data
+    sha256: a08526a6b2e5f013117658930dfbe4ae3c24156f3f0ae6db92d0a2034baf0a32
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/code_predictor.onnx.data
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/code_predictor.onnx.data
+  - name: int4/vocoder.onnx
+    sha256: d1cf6f6b77d728c4484f9277ec886dcbf06b4f4b0310c99be34d7bc6a516959e
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/vocoder.onnx
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/vocoder.onnx
+  - name: int4/vocoder.onnx.data
+    sha256: d29e56c20bc6ff8d996daaae914d5d1ec1cd8170be578dc792b44978208a9575
+    required: true
+    sources:
+      huggingface: https://huggingface.co/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/vocoder.onnx.data
+      hf-mirror: https://hf-mirror.com/wavekat/Qwen3-TTS-1.7B-VoiceDesign-ONNX/resolve/main/int4/vocoder.onnx.data

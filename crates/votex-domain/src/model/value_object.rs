@@ -28,6 +28,31 @@ pub enum ModelKind {
     Asr,
     Ocr,
     Translation,
+    /// 推理运行时依赖（如 ONNX Runtime 动态库）
+    ///
+    /// 这类条目由 registry 统一管理下载与校验，
+    /// 但**不是可加载的模型**——没有会话、没有 `load()`。
+    /// 单独建变体而不是塞进上面四类，是为了让
+    /// 「列出 TTS 模型」这类操作天然排除它们。
+    Runtime,
+}
+
+impl ModelKind {
+    /// 是否为可加载的模型（排除运行时依赖）
+    pub fn is_loadable_model(&self) -> bool {
+        !matches!(self, ModelKind::Runtime)
+    }
+
+    /// 中文显示名
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ModelKind::Tts => "TTS",
+            ModelKind::Asr => "ASR",
+            ModelKind::Ocr => "OCR",
+            ModelKind::Translation => "Translation",
+            ModelKind::Runtime => "Runtime",
+        }
+    }
 }
 
 /// 模型存储格式
@@ -45,8 +70,8 @@ pub enum EngineKind {
     // ===== TTS 引擎 =====
     /// Kokoro-82M (ONNX)
     Kokoro,
-    /// IndexTTS2 (ONNX)
-    IndexTTS2,
+    /// IndexTTS-2.5 (ONNX，yunfengwang fp32 分图布局，粤语原生支持；已取代 IndexTTS2)
+    IndexTTS25,
     /// CosyVoice 3 (ONNX)
     CosyVoice3,
     /// Qwen3-TTS
@@ -108,6 +133,10 @@ pub enum EngineKind {
     /// CTranslate2 优化引擎
     CTranslate2,
 
+    // ===== 推理运行时 =====
+    /// ONNX Runtime 动态库本身（`load-dynamic` 运行时依赖，非模型）
+    OnnxRuntime,
+
     // ===== 视频素材 =====
     /// Pexels
     Pexels,
@@ -121,7 +150,7 @@ impl EngineKind {
     /// 引擎所属模型类型
     pub fn model_kind(&self) -> ModelKind {
         match self {
-            EngineKind::Kokoro | EngineKind::IndexTTS2
+            EngineKind::Kokoro | EngineKind::IndexTTS25
                 | EngineKind::CosyVoice3 | EngineKind::Qwen3Tts
                 | EngineKind::AzureTts | EngineKind::AliyunTts => ModelKind::Tts,
 
@@ -131,6 +160,9 @@ impl EngineKind {
                 | EngineKind::FireRedAsr | EngineKind::WeNet => ModelKind::Asr,
 
             EngineKind::PaddleOCR | EngineKind::EasyOcr => ModelKind::Ocr,
+
+            // 推理运行时：不是可 load() 的模型，但需要下载与完整性校验
+            EngineKind::OnnxRuntime => ModelKind::Runtime,
 
             // LLM/翻译/素材不需要模型文件
             EngineKind::DeepSeek | EngineKind::OpenAi
@@ -152,7 +184,7 @@ impl EngineKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             EngineKind::Kokoro => "kokoro",
-            EngineKind::IndexTTS2 => "indextts2",
+            EngineKind::IndexTTS25 => "indextts25",
             EngineKind::CosyVoice3 => "cosyvoice3",
             EngineKind::Qwen3Tts => "qwen3-tts",
             EngineKind::AzureTts => "azure-tts",
@@ -182,6 +214,7 @@ impl EngineKind {
             EngineKind::Pexels => "pexels",
             EngineKind::Pixabay => "pixabay",
             EngineKind::Coverr => "coverr",
+            EngineKind::OnnxRuntime => "onnxruntime",
         }
     }
 
@@ -189,7 +222,9 @@ impl EngineKind {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "kokoro" => Some(EngineKind::Kokoro),
-            "indextts2" | "indextts" => Some(EngineKind::IndexTTS2),
+            // 迁移别名：IndexTTS2 已移除，历史配置/持久化中的 indextts2 归一到 IndexTTS25
+            "indextts2" | "indextts" => Some(EngineKind::IndexTTS25),
+            "indextts25" | "indextts-2.5" | "indextts2.5" => Some(EngineKind::IndexTTS25),
             "cosyvoice3" | "cosyvoice" => Some(EngineKind::CosyVoice3),
             "qwen3-tts" | "qwen3tts" => Some(EngineKind::Qwen3Tts),
             "azure-tts" | "azuretts" => Some(EngineKind::AzureTts),
@@ -281,7 +316,7 @@ mod tests {
     #[test]
     fn engine_kind_模型类型映射() {
         assert_eq!(EngineKind::Kokoro.model_kind(), ModelKind::Tts);
-        assert_eq!(EngineKind::IndexTTS2.model_kind(), ModelKind::Tts);
+        assert_eq!(EngineKind::IndexTTS25.model_kind(), ModelKind::Tts);
         assert_eq!(EngineKind::Whisper.model_kind(), ModelKind::Asr);
         assert_eq!(EngineKind::SenseVoice.model_kind(), ModelKind::Asr);
     }
@@ -304,5 +339,29 @@ mod tests {
             source_name: "test".to_string(),
         };
         assert_eq!(progress.percentage(), 0.0);
+    }
+
+    #[test]
+    fn model_kind_Runtime不是可加载模型() {
+        // ONNX Runtime 动态库由 registry 管理下载与校验，但不是可 load() 的模型。
+        // 这条契约保证「列出 TTS 模型」之类的操作天然排除运行时依赖。
+        assert!(!ModelKind::Runtime.is_loadable_model());
+        assert!(ModelKind::Tts.is_loadable_model());
+        assert!(ModelKind::Asr.is_loadable_model());
+        assert!(ModelKind::Ocr.is_loadable_model());
+        assert!(ModelKind::Translation.is_loadable_model());
+    }
+
+    #[test]
+    fn engine_kind_映射到Runtime类型() {
+        assert_eq!(EngineKind::OnnxRuntime.model_kind(), ModelKind::Runtime);
+        assert_eq!(EngineKind::OnnxRuntime.as_str(), "onnxruntime");
+    }
+
+    #[test]
+    fn model_kind_中文显示名() {
+        assert_eq!(ModelKind::Runtime.display_name(), "Runtime");
+        assert_eq!(ModelKind::Tts.display_name(), "TTS");
+        assert_eq!(ModelKind::Translation.display_name(), "Translation");
     }
 }

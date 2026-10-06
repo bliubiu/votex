@@ -6,15 +6,9 @@
 use rusqlite::params;
 use std::sync::{Arc, Mutex};
 
-/// 一条播放进度
-#[derive(Debug, Clone, PartialEq)]
-pub struct PlaybackProgress {
-    /// 上次播放位置（秒）
-    pub position_sec: f32,
-    /// 文件总时长（秒，0 = 未知）
-    pub duration_sec: f32,
-    pub updated_at: String,
-}
+// `PlaybackProgress` 已提升到领域层（`votex_domain::model::entity`），
+// 本模块通过 `pub use` 保持旧引用路径可用。
+pub use votex_domain::model::entity::PlaybackProgress;
 
 /// SQLite 播放进度仓储
 pub struct SqlitePlaybackRepository {
@@ -82,6 +76,21 @@ impl SqlitePlaybackRepository {
         )
         .map_err(|e| format!("清除播放进度失败: {}", e))?;
         Ok(())
+    }
+}
+
+/// 领域仓储 trait 实现
+impl votex_domain::repository::PlaybackRepository for SqlitePlaybackRepository {
+    fn get(&self, file_path: &str) -> Result<Option<PlaybackProgress>, String> {
+        SqlitePlaybackRepository::get(self, file_path)
+    }
+
+    fn save(&self, file_path: &str, position_sec: f32, duration_sec: f32) -> Result<(), String> {
+        SqlitePlaybackRepository::save(self, file_path, position_sec, duration_sec)
+    }
+
+    fn clear(&self, file_path: &str) -> Result<(), String> {
+        SqlitePlaybackRepository::clear(self, file_path)
     }
 }
 

@@ -25,7 +25,6 @@ use votex_domain::tts::value_object::{
     TtsInput, TtsParams, TtsProgress, TtsPhase, VoiceId, Volume,
 };
 
-use crate::use_case::asr_use_case::AsrUseCase;
 use crate::use_case::tts_use_case::TtsUseCase;
 
 /// 统一任务管理器
@@ -125,6 +124,12 @@ impl TaskManager {
             .find_by_id(task_id)
             .ok_or_else(|| anyhow::anyhow!("TTS 任务不存在: {}", task_id))?;
 
+        // 执行前检查：任务已被取消则不再启动
+        if matches!(task.status, TaskStatus::Cancelled) {
+            tracing::info!("TTS 任务 {} 已取消，跳过执行", task_id);
+            return Ok(());
+        }
+
         task.status = TaskStatus::Running;
         task.updated_at = now_str();
         self.tts_repo
@@ -138,7 +143,7 @@ impl TaskManager {
         });
 
         let result = (|| -> Result<()> {
-            let mut tts = TtsUseCase::new();
+            let tts = TtsUseCase::new();
             let text = task
                 .input
                 .raw_text
@@ -160,21 +165,37 @@ impl TaskManager {
             Ok(())
         })();
 
-            match result {
-                Ok(()) => {
-                    task.status = TaskStatus::Completed;
-                    task.progress.phase = TtsPhase::Completed;
-                    fire_progress(progress, ProgressEvent::PhaseChanged {
-                        phase: "TTS 完成".to_string(),
-                    });
-                }
-                Err(ref e) => {
-                    task.status = TaskStatus::Failed(format!("{}", e));
-                    fire_progress(progress, ProgressEvent::Message {
-                        text: format!("TTS 失败: {}", e),
-                    });
-                }
+        // 状态机收尾：执行期间用户可能已取消任务（cancel_tts_task 直接改库），
+        // 重读当前状态——仍是 Cancelled 就不能被 Completed/Failed 覆盖
+        let current_status = self
+            .tts_repo
+            .find_by_id(task_id)
+            .map(|t| t.status)
+            .unwrap_or(task.status.clone());
+        let cancelled_during_run = matches!(current_status, TaskStatus::Cancelled);
+
+        match (&result, cancelled_during_run) {
+            (_, true) => {
+                // 取消优先：保持 Cancelled 终态
+                task.status = TaskStatus::Cancelled;
+                fire_progress(progress, ProgressEvent::Message {
+                    text: "任务已取消".to_string(),
+                });
             }
+            (Ok(()), false) => {
+                task.status = TaskStatus::Completed;
+                task.progress.phase = TtsPhase::Completed;
+                fire_progress(progress, ProgressEvent::PhaseChanged {
+                    phase: "TTS 完成".to_string(),
+                });
+            }
+            (Err(ref e), false) => {
+                task.status = TaskStatus::Failed(format!("{}", e));
+                fire_progress(progress, ProgressEvent::Message {
+                    text: format!("TTS 失败: {}", e),
+                });
+            }
+        }
 
         task.updated_at = now_str();
         self.tts_repo
@@ -190,7 +211,7 @@ impl TaskManager {
     pub fn create_asr_task(
         &self,
         audio_path: &Path,
-        _output_path: &Path,
+        output_path: &Path,
         model: &str,
         language: &str,
         format: &str,
@@ -222,6 +243,9 @@ impl TaskManager {
                 total_slices: 0,
                 phase: AsrPhase::Idle,
             },
+            // 用户指定的输出路径必须持久化：此前参数收下即丢，
+            // 执行时从输入文件名推导，用户指定路径失效
+            output_path: Some(output_path.to_path_buf()),
             created_at: now.clone(),
             updated_at: now,
         };
@@ -245,6 +269,12 @@ impl TaskManager {
             .find_by_id(task_id)
             .ok_or_else(|| anyhow::anyhow!("ASR 任务不存在: {}", task_id))?;
 
+        // 执行前检查：任务已被取消则不再启动
+        if matches!(task.status, TaskStatus::Cancelled) {
+            tracing::info!("ASR 任务 {} 已取消，跳过执行", task_id);
+            return Ok(());
+        }
+
         task.status = TaskStatus::Running;
         task.updated_at = now_str();
         self.asr_repo
@@ -260,8 +290,12 @@ impl TaskManager {
         let fmt_str = format_str(&task.params.output_format).to_string();
 
         let result = (|| -> Result<PathBuf> {
-            let mut asr = AsrUseCase::new();
-            let out_path = task.input.file_path.with_extension(&fmt_str);
+            let asr = crate::services::shared_cases::shared_asr();
+            // 优先用户指定的输出路径，缺省按输入文件名 + 目标扩展名推导
+            let out_path = task
+                .output_path
+                .clone()
+                .unwrap_or_else(|| task.input.file_path.with_extension(&fmt_str));
 
             asr.recognize(
                 &task.input.file_path,
@@ -269,13 +303,28 @@ impl TaskManager {
                 &model_str,
                 &lang_str,
                 &fmt_str,
+                None,
             )?;
 
             Ok(out_path)
         })();
 
-        match result {
-            Ok(ref output_path) => {
+        // 状态机收尾：执行期间用户可能已取消任务，重读当前状态防覆盖
+        let current_status = self
+            .asr_repo
+            .find_by_id(task_id)
+            .map(|t| t.status)
+            .unwrap_or(task.status.clone());
+        let cancelled_during_run = matches!(current_status, TaskStatus::Cancelled);
+
+        match (&result, cancelled_during_run) {
+            (_, true) => {
+                task.status = TaskStatus::Cancelled;
+                fire_progress(progress, ProgressEvent::Message {
+                    text: "任务已取消".to_string(),
+                });
+            }
+            (Ok(ref output_path), false) => {
                 task.status = TaskStatus::Completed;
                 fire_progress(progress, ProgressEvent::PhaseChanged {
                     phase: "ASR 完成".to_string(),
@@ -284,7 +333,7 @@ impl TaskManager {
                     text: format!("识别完成: {:?}", output_path),
                 });
             }
-            Err(ref e) => {
+            (Err(ref e), false) => {
                 task.status = TaskStatus::Failed(format!("{}", e));
                 fire_progress(progress, ProgressEvent::Message {
                     text: format!("ASR 失败: {}", e),
@@ -329,16 +378,14 @@ impl TaskManager {
         total
     }
 
-    /// 获取 TTS 任务列表
+    /// 获取 TTS 任务列表（全量，按创建时间倒序）
     pub fn list_tts_tasks(&self) -> Vec<TtsTask> {
-        self.tts_repo.find_pending()
+        self.tts_repo.find_all()
     }
 
-    /// 获取 ASR 任务列表
+    /// 获取 ASR 任务列表（全量，按创建时间倒序）
     pub fn list_asr_tasks(&self) -> Vec<AsrTask> {
-        // AsrTaskRepository 没有 list_all 方法，用 find_pending
-        // 实际项目中应扩展 AsrTaskRepository trait
-        Vec::new()
+        self.asr_repo.find_all()
     }
 
     /// 取消 TTS 任务

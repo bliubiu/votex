@@ -1,0 +1,42 @@
+id: opus-mt-zh-en
+name: OPUS-MT 中译英
+kind: Translation
+engine: OpusMt
+# 注意：引擎加载的是 ONNX 模型，不是 pytorch_model.bin。
+# 这里统一使用 Xenova 社区导出的 ONNX 版本（含 decoder_with_past，可启用 KV Cache）。
+files:
+  - name: encoder_model.onnx
+    sha256: 4e602ebfca58367de625716ba17ba9e3c16ff2c49a9d12221d1bdd338f4130d9
+    sources:
+      huggingface: https://huggingface.co/Xenova/opus-mt-zh-en/resolve/main/onnx/encoder_model.onnx
+      hf-mirror: https://hf-mirror.com/Xenova/opus-mt-zh-en/resolve/main/onnx/encoder_model.onnx
+  - name: decoder_model.onnx
+    sha256: 0c7e21b596beab974adcf66c9066b971b1c7d962b034816690b451d28cf3d3c4
+    sources:
+      huggingface: https://huggingface.co/Xenova/opus-mt-zh-en/resolve/main/onnx/decoder_model.onnx
+      hf-mirror: https://hf-mirror.com/Xenova/opus-mt-zh-en/resolve/main/onnx/decoder_model.onnx
+  - name: decoder_with_past_model.onnx
+    sha256: 342d3be88ed7b10aacb21e5cfd799e4077d22d86cdad7defa0cf91f97eb0e556
+    sources:
+      huggingface: https://huggingface.co/Xenova/opus-mt-zh-en/resolve/main/onnx/decoder_with_past_model.onnx
+      hf-mirror: https://hf-mirror.com/Xenova/opus-mt-zh-en/resolve/main/onnx/decoder_with_past_model.onnx
+  - name: config.json
+    sha256: b17db4d407d003fe76e3f6b44cc71a18f5fd9f5e674bb4d0241f1b40d832a292
+    sources:
+      huggingface: https://huggingface.co/Xenova/opus-mt-zh-en/resolve/main/config.json
+      hf-mirror: https://hf-mirror.com/Xenova/opus-mt-zh-en/resolve/main/config.json
+  - name: source.spm
+    sha256: e27a3a1b539f4959ec72ea60e453f49156289f95d4e6000b29332efc45616203
+    sources:
+      huggingface: https://huggingface.co/Xenova/opus-mt-zh-en/resolve/main/source.spm
+      hf-mirror: https://hf-mirror.com/Xenova/opus-mt-zh-en/resolve/main/source.spm
+  - name: target.spm
+    sha256: 6a881f4717cd7265f53fea54fd3dc689c767c05338fac7a4590f3088cb2d7855
+    sources:
+      huggingface: https://huggingface.co/Xenova/opus-mt-zh-en/resolve/main/target.spm
+      hf-mirror: https://hf-mirror.com/Xenova/opus-mt-zh-en/resolve/main/target.spm
+  - name: vocab.json
+    sha256: c0f79ee4c413ccb24cd808a0c727eec85b2130f23c82802cc1caeb07b5f0d458
+    sources:
+      huggingface: https://huggingface.co/Xenova/opus-mt-zh-en/resolve/main/vocab.json
+      hf-mirror: https://hf-mirror.com/Xenova/opus-mt-zh-en/resolve/main/vocab.json

@@ -3,18 +3,19 @@ use rodio::Source;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use crate::theme::colors;
+use votex_domain::repository::PlaybackRepository;
 
-/// 章节标记（来自合成时写出的 `{音频}.chapters.json`）
-#[derive(Debug, Clone)]
-pub struct ChapterMark {
-    pub title: String,
-    pub start_sec: f32,
-    pub end_sec: f32,
-}
+use crate::theme::colors;
+use crate::widgets::player_logic::{
+    chapter_at, clamp_resume_position, format_secs, load_chapters, total_duration,
+    ChapterMark,
+};
 
 /// 音频播放器状态
-#[derive(Debug, Clone)]
+///
+/// 手工实现 `Debug`：内部持有 `Arc<dyn PlaybackRepository>`，
+/// trait object 没有 `Debug` 实现。
+#[derive(Clone)]
 pub struct AudioPlayerState {
     pub is_playing: bool,
     /// 播放位置（秒，由播放线程回写）
@@ -32,6 +33,30 @@ pub struct AudioPlayerState {
     pub current_chapter: usize,
     /// 用户正在拖动进度条（拖动期间不回写后端位置）
     dragging_slider: bool,
+    /// 播放进度仓储（断点续听）。
+    ///
+    /// 原先是 `OnceLock` 全局单例 + 内部自开数据库，
+    /// 导致 GUI 无法得知数据库是否真的可用、也无法参与统一装配。
+    /// 现由 `AppContext` 注入，`None` 时降级为不续播。
+    pub playback_repo: Option<Arc<dyn PlaybackRepository>>,
+}
+
+impl std::fmt::Debug for AudioPlayerState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioPlayerState")
+            .field("is_playing", &self.is_playing)
+            .field("position", &self.position)
+            .field("duration", &self.duration)
+            .field("volume", &self.volume)
+            .field("file_path", &self.file_path)
+            .field("file_name", &self.file_name)
+            .field("speed", &self.speed)
+            .field("chapters", &self.chapters.len())
+            .field("current_chapter", &self.current_chapter)
+            .field("dragging_slider", &self.dragging_slider)
+            .field("has_playback_repo", &self.playback_repo.is_some())
+            .finish()
+    }
 }
 
 impl Default for AudioPlayerState {
@@ -47,6 +72,7 @@ impl Default for AudioPlayerState {
             chapters: Vec::new(),
             current_chapter: 0,
             dragging_slider: false,
+            playback_repo: None,
         }
     }
 }
@@ -60,18 +86,18 @@ impl AudioPlayerState {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        self.chapters = load_chapters_json(path);
+        self.chapters = load_chapters(path);
         self.current_chapter = 0;
         self.position = 0.0;
-        self.duration = self
-            .chapters
-            .last()
-            .map(|c| c.end_sec)
-            .unwrap_or(0.0);
+        self.duration = total_duration(&self.chapters);
         // 断点续听：恢复上次进度
-        if let Some(repo) = playback_repo() {
+        if let Some(repo) = self.playback_repo.clone() {
             if let Ok(Some(p)) = repo.get(path) {
-                self.position = p.position_sec.min(self.duration.max(p.position_sec));
+                // 夹取到已知时长内；时长未知（章节表缺失）时不限制上界。
+                // 原实现写作 `p.position_sec.min(self.duration.max(p.position_sec))`，
+                // 恒等于 `p.position_sec`，夹取从未生效——
+                // 文件被截短后会从越界位置起播。
+                self.position = clamp_resume_position(p.position_sec, self.duration);
                 if self.duration == 0.0 {
                     self.duration = p.duration_sec;
                 }
@@ -92,7 +118,7 @@ impl AudioPlayerState {
         if self.file_path.is_empty() || self.position <= 0.0 {
             return;
         }
-        if let Some(repo) = playback_repo() {
+        if let Some(repo) = self.playback_repo.clone() {
             let _ = repo.save(&self.file_path, self.position, self.duration);
         }
     }
@@ -233,11 +259,10 @@ impl AudioPlayer {
                     if !state.chapters.is_empty() {
                         ui.separator();
                         // 当前章节
-                        state.current_chapter = state
-                            .chapters
-                            .iter()
-                            .position(|c| state.position >= c.start_sec && state.position < c.end_sec)
-                            .unwrap_or(state.current_chapter);
+                        // 落在章节间隙或末尾时保持原选中项
+                        if let Some(idx) = chapter_at(&state.chapters, state.position) {
+                            state.current_chapter = idx;
+                        }
                         egui::ComboBox::from_id_salt("章节跳转")
                             .selected_text(
                                 state
@@ -269,58 +294,6 @@ impl AudioPlayer {
     }
 }
 
-fn format_secs(s: f32) -> String {
-    let total = s.max(0.0) as u64;
-    format!("{:02}:{:02}:{:02}", total / 3600, (total % 3600) / 60, total % 60)
-}
-
-// ===== 章节表加载 =====
-
-/// 加载 `{音频}.chapters.json`
-fn load_chapters_json(audio_path: &str) -> Vec<ChapterMark> {
-    let json_path = std::path::Path::new(audio_path).with_extension("chapters.json");
-    let Ok(content) = std::fs::read_to_string(&json_path) else {
-        return Vec::new();
-    };
-    #[derive(serde::Deserialize)]
-    struct Entry {
-        title: String,
-        start_ms: u64,
-        end_ms: u64,
-    }
-    serde_json::from_str::<Vec<Entry>>(&content)
-        .map(|entries| {
-            entries
-                .into_iter()
-                .map(|e| ChapterMark {
-                    title: e.title,
-                    start_sec: e.start_ms as f32 / 1000.0,
-                    end_sec: e.end_ms as f32 / 1000.0,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-// ===== 播放进度持久化（SQLite） =====
-
-static PLAYBACK_REPO: std::sync::OnceLock<Option<Arc<votex_infra::persistence::playback_repo::SqlitePlaybackRepository>>> =
-    std::sync::OnceLock::new();
-
-fn playback_repo(
-) -> Option<Arc<votex_infra::persistence::playback_repo::SqlitePlaybackRepository>> {
-    PLAYBACK_REPO
-        .get_or_init(|| {
-            let conn = votex_infra::persistence::db::open_database(
-                std::path::Path::new("data/votex.db"),
-            )
-            .ok()?;
-            Some(Arc::new(
-                votex_infra::persistence::playback_repo::SqlitePlaybackRepository::new(conn),
-            ))
-        })
-        .clone()
-}
 
 // ===== 音频播放后端 =====
 
@@ -521,7 +494,7 @@ fn audio_thread(rx: mpsc::Receiver<AudioCmd>) {
             audio_pos += dt * current_speed;
         }
         {
-            let mut st = status_cell().lock().unwrap();
+            let mut st = status_cell().lock().unwrap_or_else(|e| e.into_inner());
             st.position = audio_pos;
             st.duration = audio_duration;
             st.playing = playing;

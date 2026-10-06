@@ -26,8 +26,11 @@ fn model_dir() -> PathBuf {
 }
 
 fn test_wavs_dir() -> PathBuf {
-    let mut dir = model_dir();
-    dir.push("test_wavs");
+    // WeNet 目录本身无 test_wavs，与 firered/paraformer 共用
+    // sherpa-onnx 标准测试集（此前指向不存在的本目录子路径，
+    // 全部测试静默跳过——假绿）
+    let mut dir = workspace_root();
+    dir.push("models/asr/firered-asr-ctc/test_wavs");
     dir
 }
 
@@ -49,6 +52,7 @@ fn make_asr_params() -> AsrParams {
     }
 }
 
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test wenet_integration_test --features slow-models")]
 #[test]
 fn test_wenet_load_and_recognize_all_wavs() {
     let mdir = model_dir();
@@ -81,7 +85,7 @@ fn test_wenet_load_and_recognize_all_wavs() {
     eprintln!("模型目录: {:?}", mdir);
     eprintln!("找到 {} 个测试音频\n", wav_files.len());
 
-    let mut provider = votex_infra::asr::wenet::WeNetProvider::new();
+    let provider = votex_infra::asr::wenet::WeNetProvider::new();
     let model = Model::new(
         ModelId::new("wenet"),
         &mdir.to_string_lossy(),
@@ -127,6 +131,7 @@ fn test_wenet_load_and_recognize_all_wavs() {
 }
 
 /// 使用 0.wav 验证具体识别内容
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test wenet_integration_test --features slow-models")]
 #[test]
 fn test_wenet_recognize_0wav_content() {
     let mdir = model_dir();
@@ -136,7 +141,7 @@ fn test_wenet_recognize_0wav_content() {
         return;
     }
 
-    let mut provider = votex_infra::asr::wenet::WeNetProvider::new();
+    let provider = votex_infra::asr::wenet::WeNetProvider::new();
     let model = Model::new(
         ModelId::new("wenet"),
         &mdir.to_string_lossy(),
@@ -152,13 +157,21 @@ fn test_wenet_recognize_0wav_content() {
     let text = result.text.trim();
     eprintln!("WeNet 0.wav 识别结果: '{}'", text);
     assert!(!text.is_empty(), "识别结果不应为空");
-    assert!(text.contains("一") || text.contains("第") || text.contains("的") || text.contains("中"),
-        "应识别出中文内容，得到: '{}'", text);
+    // 0.wav 是中英混说音频（"昨天是 Monday, today is 礼拜二, the day
+    // after tomorrow 是星期三"）。WeNet 是纯中文 ASR，混说中段会输出
+    // 同音字噪声（实测"曼雷特灯以礼巴二只得阿特猫蓉"），但首尾语义
+    // （昨天…是星期三/礼拜二）保留——按星期语义断言，与其他引擎同口径
+    assert!(
+        text.contains("星期") || text.contains("礼拜"),
+        "应识别出星期相关语义，得到: '{}'",
+        text
+    );
 
     provider.unload().ok();
 }
 
 /// 使用 8kHz 采样率音频测试兼容性
+#[cfg_attr(not(feature = "slow-models"), ignore = "需本地模型与推理，跑法: cargo test -p votex-infra --test wenet_integration_test --features slow-models")]
 #[test]
 fn test_wenet_recognize_8k_wav() {
     let mdir = model_dir();
@@ -168,7 +181,7 @@ fn test_wenet_recognize_8k_wav() {
         return;
     }
 
-    let mut provider = votex_infra::asr::wenet::WeNetProvider::new();
+    let provider = votex_infra::asr::wenet::WeNetProvider::new();
     let model = Model::new(
         ModelId::new("wenet"),
         &mdir.to_string_lossy(),

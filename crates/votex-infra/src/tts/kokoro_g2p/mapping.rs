@@ -1,14 +1,25 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use crate::shared::WorkspacePaths;
+
+/// Kokoro 中文 G2P 映射表所在子目录（相对 `models/tts/`）
+const KOKORO_ZH_SUBDIR: &str = "kokoro-82m-v1.1-zh";
+
+/// 在统一的模型根目录下定位映射表文件
+fn locate_map_file(file_name: &str) -> std::path::PathBuf {
+    WorkspacePaths::models_dir()
+        .join("tts")
+        .join(KOKORO_ZH_SUBDIR)
+        .join(file_name)
+}
+
 // ===================== v1.0: 拼音→IPA 映射 =====================
 
 /// 拼音→IPA 映射表，键为 "ni3" 格式的拼音+声调，值为 IPA 音素字符串
 /// 从文件系统加载（而非编译时），以容忍模型目录不完整
 static PINYIN_MAP: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let path = std::path::Path::new(manifest_dir)
-        .join("../../models/tts/kokoro-82m-v1.1-zh/pinyin_to_ipa.json");
+    let path = locate_map_file("pinyin_to_ipa.json");
     match std::fs::read_to_string(&path) {
         Ok(json_str) => load_string_map(&json_str, "pinyin_to_ipa.json"),
         Err(_) => {
@@ -23,12 +34,6 @@ pub fn lookup(pinyin_with_tone: &str) -> Option<&'static str> {
     PINYIN_MAP.get(pinyin_with_tone).copied()
 }
 
-/// 返回已加载的 v1.0 映射条目数
-#[allow(dead_code)]
-pub fn len() -> usize {
-    PINYIN_MAP.len()
-}
-
 // ===================== v1.1-zh: 拼音→注音映射 =====================
 
 /// 拼音→注音映射表，键为 "ni3" 格式的拼音+声调，值为注音字符串（如 "ㄋㄧ3"）
@@ -38,25 +43,23 @@ static PINYIN_ZHUYIN_MAP: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
 
 /// 运行时加载拼音→注音映射
 fn load_pinyin_zhuyin_map() -> HashMap<String, String> {
-    // 尝试当前工作目录
-    let relative_path = "models/tts/kokoro-82m-v1.1-zh/pinyin_to_zhuyin.json";
-    let path = std::path::Path::new(relative_path);
-    if path.exists() {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            return serde_json::from_str(&content).unwrap_or_default();
+    let path = locate_map_file("pinyin_to_zhuyin.json");
+    match std::fs::read_to_string(&path) {
+        Ok(content) => parse_string_map(&content, &path.display().to_string()),
+        Err(_) => {
+            tracing::warn!(
+                "拼音→注音文件不存在 ({}), 注音功能不可用",
+                path.display()
+            );
+            HashMap::new()
         }
     }
-    // 尝试从 manifest 目录查找
-    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../")
-        .join(relative_path);
-    if manifest_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-            return serde_json::from_str(&content).unwrap_or_default();
-        }
-    }
-    tracing::warn!("拼音→注音文件不存在 ({}), 注音功能不可用", relative_path);
-    HashMap::new()
+}
+
+/// 返回已加载的 v1.0 映射条目数（供测试断言映射表非空）
+#[cfg(test)]
+pub fn len() -> usize {
+    PINYIN_MAP.len()
 }
 
 /// 查询拼音→注音映射（v1.1-zh）
@@ -64,18 +67,33 @@ pub fn lookup_zhuyin(pinyin_with_tone: &str) -> Option<String> {
     PINYIN_ZHUYIN_MAP.get(pinyin_with_tone).cloned()
 }
 
-/// 返回 v1.1-zh 映射条目数
-#[allow(dead_code)]
+/// 返回 v1.1-zh 映射条目数（供测试断言映射表非空）
+#[cfg(test)]
 pub fn zhuyin_len() -> usize {
     PINYIN_ZHUYIN_MAP.len()
 }
 
 // ===================== 通用 =====================
 
+/// 解析 String→String 映射 JSON
+///
+/// 降级策略：JSON 损坏时记录错误并返回空表，而不是 panic。
+/// 旧实现在此 `panic!("{} 格式无效")`，而同一模块另一处
+/// `load_pinyin_zhuyin_map` 却用 `unwrap_or_default()` 静默返回空表 ——
+/// 同一类问题两套处理，且 panic 版本会直接击崩溃 GUI 进程。
+fn parse_string_map(json_str: &str, name: &str) -> HashMap<String, String> {
+    match serde_json::from_str(json_str) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!("{} 格式无效，相关 G2P 映射不可用: {}", name, e);
+            HashMap::new()
+        }
+    }
+}
+
 /// 从 JSON 字符串加载 String→String 映射并泄漏为 &'static str
 fn load_string_map(json_str: &str, name: &str) -> HashMap<&'static str, &'static str> {
-    let map: HashMap<String, String> = serde_json::from_str(json_str)
-        .unwrap_or_else(|e| panic!("{} 格式无效: {}", name, e));
+    let map = parse_string_map(json_str, name);
 
     let mut static_map: HashMap<&'static str, &'static str> = HashMap::with_capacity(map.len());
     for (k, v) in map.into_iter() {
