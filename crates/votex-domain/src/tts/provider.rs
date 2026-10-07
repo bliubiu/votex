@@ -38,4 +38,15 @@ pub trait TtsProvider: Send + Sync {
         // 默认只支持普通话
         vec![DialectSupport::new(Dialect::Mandarin, crate::tts::dialect::DialectQuality::Native)]
     }
+
+    /// 引擎能力自描述
+    ///
+    /// 默认从 `engine_kind` / `sample_rate` / `supported_dialects` 组装，
+    /// 无需加载模型即可调用；具体 provider 可覆写以补充更精确的信息。
+    /// 供 `votex model list --json` 与 `votex serve` 的程序化发现复用。
+    fn capability(&self) -> crate::model::capability::EngineCapability {
+        crate::model::capability::EngineCapability::profile(self.engine_kind())
+            .with_sample_rate(self.sample_rate())
+            .with_dialects(self.supported_dialects())
+    }
 }

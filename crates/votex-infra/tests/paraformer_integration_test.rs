@@ -103,6 +103,7 @@ fn paraformer_识别0wav内容() {
     not(feature = "slow-models"),
     ignore = "需本地 Paraformer 模型目录；跑法: cargo test -p votex-infra --test paraformer_integration_test --features slow-models"
 )]
+#[allow(non_snake_case)]
 fn paraformer_FunASR导出必须被明确拒绝() {
     let model_dir = model_dir();
     // 护栏只在「目录里只有 FunASR 导出、没有 sherpa 转换模型」时才有意义：
@@ -142,6 +143,7 @@ fn paraformer_FunASR导出必须被明确拒绝() {
     not(feature = "slow-models"),
     ignore = "加载 237MB Paraformer 模型并推理；跑法: cargo test -p votex-infra --test paraformer_integration_test --features slow-models"
 )]
+#[allow(non_snake_case)]
 fn paraformer_未加载时识别报EngineNotLoaded() {
     let provider = ParaformerProvider::new();
     let audio_data = AudioData::silence(16000, 500);

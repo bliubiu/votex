@@ -6,3 +6,6 @@
 pub mod mp3;
 pub mod wav;
 pub mod denoiser;
+pub mod ref_audio;
+/// 麦克风实时采集（实时听写输入）
+pub mod capture;

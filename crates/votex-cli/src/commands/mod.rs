@@ -6,12 +6,17 @@ pub mod root;
 pub mod model;
 pub mod tts;
 pub mod asr;
+/// 实时听写（麦克风 → 流式识别）
+pub mod dictate;
 pub mod ocr;
 pub mod pipeline;
 pub mod batch_tts;
 pub mod batch_asr;
 pub mod script;
 pub mod video;
+pub mod dub;
 pub mod translate;
 pub mod config;
 pub mod voice;
+pub mod role;
+pub mod serve;

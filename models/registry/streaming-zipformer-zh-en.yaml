@@ -1,0 +1,55 @@
+# 流式 Zipformer（实时听写，中英混合）
+#
+# 说明：
+# - sherpa-onnx 官方预转换流式 transducer 模型，int8 量化版（CPU 实时解码流畅）。
+# - votex 的 streaming.rs 实现按 encoder/decoder/joiner + tokens.txt 加载，
+#   int8 优先、float 回退（find_component 兼容两种命名）。
+# - sha256 暂未固定（官方发布物随 epoch 命名重传较频繁），完整性由加载失败兜底。
+id: streaming-zipformer-zh-en
+name: 流式 Zipformer（中英混合，实时听写）
+kind: Asr
+engine: StreamingZipformer
+sub_dir: streaming-zipformer
+files:
+  - name: tokens.txt
+    required: true
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/tokens.txt
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/tokens.txt
+
+  - name: encoder-epoch-99-avg-1.int8.onnx
+    required: true
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/encoder-epoch-99-avg-1.int8.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/encoder-epoch-99-avg-1.int8.onnx
+
+  - name: decoder-epoch-99-avg-1.int8.onnx
+    required: true
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/decoder-epoch-99-avg-1.int8.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/decoder-epoch-99-avg-1.int8.onnx
+
+  - name: joiner-epoch-99-avg-1.int8.onnx
+    required: true
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/joiner-epoch-99-avg-1.int8.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/joiner-epoch-99-avg-1.int8.onnx
+
+  # float32 版本为可选项（已下载完整包的用户可直接复用，无需重复下载 int8）
+  - name: encoder-epoch-99-avg-1.onnx
+    required: false
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/encoder-epoch-99-avg-1.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/encoder-epoch-99-avg-1.onnx
+
+  - name: decoder-epoch-99-avg-1.onnx
+    required: false
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/decoder-epoch-99-avg-1.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/decoder-epoch-99-avg-1.onnx
+
+  - name: joiner-epoch-99-avg-1.onnx
+    required: false
+    sources:
+      huggingface: https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/joiner-epoch-99-avg-1.onnx
+      hf-mirror: https://hf-mirror.com/csukuangfj/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/resolve/main/joiner-epoch-99-avg-1.onnx

@@ -24,9 +24,36 @@ use votex_domain::model::entity::Model;
 use votex_domain::model::value_object::EngineKind;
 use votex_domain::shared::value_object::AudioData;
 use votex_domain::tts::provider::TtsProvider;
-use votex_domain::tts::value_object::{TtsParams, VoiceId};
+use votex_domain::tts::value_object::{Emotion, EmotionConfig, TtsParams, VoiceId};
 
 use crate::shared::{EngineState, ExecutionProvider, ModelFileLocator, OrtSessionFactory};
+
+/// 0.6B（预设 speaker embedding）的情感参数不支持告警——进程内提示一次
+static EMOTION_WARN: super::EmotionWarnOnce = super::EmotionWarnOnce::new();
+
+/// 情感配置 → 追加到 instruct 的英文指令语（1.7B VoiceDesign 通道）
+///
+/// instruct 走英文（与预设音色指令同一语言域），强度映射 intensity：
+/// ≥1.5 用 strongly 强化。Neutral 返回空串（调用方已过滤，防御性兜底）。
+fn emotion_instruct_clause(cfg: &EmotionConfig) -> String {
+    let tone = match cfg.emotion {
+        Emotion::Neutral => return String::new(),
+        Emotion::Happy => "happy and cheerful",
+        Emotion::Sad => "sad and melancholic",
+        Emotion::Angry => "angry and tense",
+        Emotion::Fearful => "fearful and nervous",
+        Emotion::Surprised => "surprised and astonished",
+        Emotion::Disgusted => "disgusted",
+        Emotion::Contempt => "contemptuous",
+        Emotion::Serious => "serious and solemn",
+        Emotion::Blue => "blue and downcast",
+        Emotion::Concern => "caring and concerned",
+        Emotion::Psychology => "suspenseful and intriguing",
+        Emotion::Whisper => "whispered and soft",
+    };
+    let strength = if cfg.intensity >= 1.5 { "strongly " } else { "" };
+    format!(" Speak {strength}in a {tone} tone.")
+}
 
 // ============================================================
 // 常量定义
@@ -832,7 +859,7 @@ impl TtsProvider for Qwen3TtsProvider {
         &self,
         text: &str,
         voice: &VoiceId,
-        _params: &TtsParams,
+        params: &TtsParams,
     ) -> Result<AudioData, TtsError> {
         // 配置已 clone 出来，guard 必须在此立即释放。
         // 旧写法把 guard 一直持有到函数结束（数分钟的自回归推理），
@@ -859,8 +886,20 @@ impl TtsProvider for Qwen3TtsProvider {
         let input_ids = tokenize_text(tok, &chat);
 
         // ---- 2. Instruct tokens（音色指令，先于角色前缀） ----
-        // 与 Python 参考实现一致：指令文本需作为 user 消息包装再 tokenize
-        let instruct_tokens: Vec<i64> = if let Some(instruct_str) = self.voice_to_instruct(&voice.id) {
+        // 与 Python 参考实现一致：指令文本需作为 user 消息包装再 tokenize。
+        // 情感参数接线：非 Neutral 的 emotion 以英文指令语追加到 instruct
+        // （1.7B VoiceDesign 通道）；0.6B 走预设 speaker embedding，
+        // 无 instruct 通道，情感参数只能提示不支持。
+        let mut instruct_str = self.voice_to_instruct(&voice.id);
+        if let Some(ref emo) = params.emotion {
+            if emo.emotion != Emotion::Neutral {
+                match instruct_str.as_mut() {
+                    Some(s) => s.push_str(&emotion_instruct_clause(emo)),
+                    None => EMOTION_WARN.warn_if_unsupported("Qwen3-TTS 0.6B", params),
+                }
+            }
+        }
+        let instruct_tokens: Vec<i64> = if let Some(instruct_str) = instruct_str {
             let instruct_chat = format!("<|im_start|>user\n{}<|im_end|>\n", instruct_str);
             tokenize_text(tok, &instruct_chat)
         } else {
@@ -1275,6 +1314,27 @@ mod tests {
         let p = Qwen3TtsProvider::new();
         assert!(p.voice_to_instruct("default").is_some());
         assert!(p.voice_to_instruct("nonexistent").is_none());
+    }
+
+    #[test]
+    fn 情感指令语_追加语义与强度映射() {
+        // 情感参数接线（此前 TtsParams.emotion 被所有引擎忽略）：
+        // 1.7B instruct 通道按情感生成英文指令语，intensity ≥1.5 强化
+        let happy = EmotionConfig::new(Emotion::Happy, 1.0);
+        assert_eq!(
+            emotion_instruct_clause(&happy),
+            " Speak in a happy and cheerful tone."
+        );
+        let strong_sad = EmotionConfig::new(Emotion::Sad, 1.5);
+        assert_eq!(
+            emotion_instruct_clause(&strong_sad),
+            " Speak strongly in a sad and melancholic tone."
+        );
+        assert_eq!(
+            emotion_instruct_clause(&EmotionConfig::new(Emotion::Neutral, 1.0)),
+            "",
+            "Neutral 不应生成指令语"
+        );
     }
 
     #[test]

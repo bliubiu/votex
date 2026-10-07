@@ -3,6 +3,86 @@
 > 项目：声阅（votex）—— Rust 离线 TTS / ASR / 翻译 / OCR 多引擎工作台
 > 格式参考 Keep a Changelog；按日期倒序记录功能、修复与验证结论。
 
+## [2026-10-07] 实时听写 + 说话人分离 + 词级时间戳对齐（CLI/GUI 对等）
+
+### 实时/流式听写（新功能）
+- **领域层**（`domain/asr/streaming.rs` 新模块）：`StreamingAsrProvider` /
+  `StreamingAsrSession` / `StreamingUpdate`（partial + 端点定稿 + 累计时长），
+  会话对象 `Send` 可整体移交工作线程；新增 `EngineKind::StreamingZipformer`
+  全链路注册（能力自描述 / 显示名 / 解析）
+- **引擎**（`infra/asr/streaming.rs` 新模块）：流式 Zipformer transducer
+  （sherpa-onnx `OnlineRecognizer`，中英混合 int8），端点检测自动分句
+  （句尾静音 2.4s / 连续语音后 1.4s）；共享识别器经 `Arc<Mutex>` 串行化
+- **麦克风采集**（`infra/audio/capture.rs` 新模块）：cpal 默认输入设备 →
+  单声道下混 → 有状态线性插值重采样到 16kHz（`LinearResampler`，分段调用
+  与整体重采样一致的契约测试）；`cpal::Stream` 非 Send——采集句柄全程
+  留在 worker 线程内启停
+- **用例**（`app/use_case/dictation_use_case.rs` 新模块）：模型加载 → 麦克风
+  → 流式解码 → `DictationEvent { Started/Partial/Final/Stopped/Error }`
+  事件回调；停止时冲刷残余音频、全文落盘 UTF-8 txt
+- **CLI**：`votex dictate [-o 转写.txt]`——`○` 未定稿单行覆盖刷新、`●`
+  定稿换行，Ctrl+C 置停止令牌后落盘
+- **GUI**：新「实时听写」页（语音处理分组）——模型/保存路径选择、开始停止、
+  中间结果灰字实时刷新、定稿逐段追加可编辑转写区；事件走页面专属 channel
+  （TaskEvent 无流式增量语义），每帧非阻塞拉取
+
+### 说话人分离（死代码修复 + 用例整合落地）
+- `speaker_diarization.rs` 此前 trait 签名与领域层脱节、sherpa 结构体写法
+  错误，**整个工作区编译不过**；按 sherpa-onnx 1.13 真实 API 重写：
+  `OfflineSpeakerSegmentationModelConfig` 为结构体（pyannote + num_threads）、
+  `set_config` 动态覆盖聚类参数（固定人数 / 阈值自动二选一）、模型目录
+  自动发现（兼容 tar.bz2 解包子目录）；`recognize` 明确报错引导走
+  `diarize_with`
+- `AsrUseCase::recognize_ex` 扩展入口：识别后对全音频分离，每条字幕按
+  **时间重叠最大化**标注 `SubtitleEntry.speaker`（领域字段，serde default
+  向后兼容）；SRT/TXT 输出 `[说话人N]` 前缀（LRC 不标），导出
+  `<output>.diarization.json` 说话人时间轴
+- CLI `votex asr --diarize [--num-speakers N]`；GUI 识别页勾选项 + 人数设置
+
+### 词级时间戳对齐（伪时间戳 → 真实对齐）
+- `votex_infra::asr::recognize_output_from` 统一组装各引擎结果：Whisper /
+  Paraformer / WeNet / FireRedASR（CTC 类）等 sherpa 引擎提取**真实 token
+  级时间戳**（词终点 = 下一词起点，清理 `▁` 占位与 `<|...|>` 特殊标记）；
+  SenseVoice 等无时间戳引擎回退整段伪时间戳（`start == end == 0` 契约）
+- `group_words_into_entries` 组句：句尾标点 / 24 字符 / 6 秒 /
+  600ms 静音间隔断句，CJK 连写、英文词间补空格；切片偏移无条件累加
+  （docs/23 A2 语义保留）；导出 `<output>.words.json`（绝对时间轴词列表）
+- CLI `votex asr --words`；GUI 识别页勾选项
+
+### 配套
+- 模型清单：`streaming-zipformer-zh-en.yaml`（HF + hf-mirror 双源，int8 必需
+  + float 可选）、`speaker-diarization.yaml`（Pyannote 分割 tar.bz2 逐成员
+  提取 + 3D-Speaker ERes2Net 嵌入单文件）；落地目录与 provider 查找一致
+- 文档：`docs/29-实时听写与说话人分离与词级时间戳落地.md`
+- 验证：全工作区编译零错误；domain 211 / infra 483 / app 149 / cli 58 /
+  gui 40 单测通过；重采样 44.1k→16k 长度/分段一致性/立体声下混专项测试
+
+## [2026-10-07] CTranslate2 翻译加速后端（`ct2` feature 门控双形态）
+
+- **路线修正**：CTranslate2 无官方 C API（仅 C++/Python），原骨架的
+  `libloading` 运行时直调假设不可行；改用 [`ct2rs`](https://crates.io/crates/ct2rs)
+  绑定（vendor 模式源码编译 C++ 库，需 CMake + MSVC + ninja）。
+- **`ct2` feature 门控双形态**（`translation/ctranslate2/` 目录模块）：
+  - `imp_enabled`（`--features ct2`）：int8 量化真实推理，`Translator` +
+    双 SentencePiece 分词（自动 `</s>` 追加，等价 opus_mt 手写流程）；
+    方向路由对齐 opus-mt（目录名 `en-zh` 判向、`Auto` 跟随、方向不符
+    `UnsupportedDirection`）；`supported_pairs` 动态声明、`max_input_chars=256`
+  - `imp_fallback`（默认构建）：模型探测 + 「未启用 ct2 feature」构建引导
+    提示；默认构建零影响（不链接 C++ 库）
+  - 双形态契约测试（未加载 → `ModelNotLoaded` / 空文本 → `EmptyText`）；
+    引擎列表与工厂分支按 feature cfg 接线（`ct2` 别名归一化已有）
+- **模型转换脚本 `scripts/convert_ct2.py`**（uv + PEP 723 内联依赖，禁 pip）：
+  官方转换器 int8 转换 + 补齐分词文件（官方转换器不复制 `source.spm`/
+  `target.spm`，ct2rs 加载必需）+ 产物枚举校验；HF 镜像兜底。
+  实测 opus-mt-zh-en：int8 model.bin 75.1 MB（原始约 1/4）
+- **registry 条目 `ct2-opus-mt-zh-en.yaml`**：分词文件指向 Helsinki-NLP
+  真实 URL；model.bin / shared_vocabulary.json 为本地转换产物（sources 为
+  源模型溯源链接，下载入口即转换脚本），SHA256 已回填
+- **集成测试 `ctranslate2_translation_test.rs`**（`--features ct2` 编译，
+  金标用例 `slow-models` 门控）：方向路由 / 批量一致性 / 未加载契约
+- **文档**：`docs/engines/tr-ctranslate2.md` 重写（准入清单 + 行为契约 +
+  构建与转换指引）；capability 备注改「翻译加速后端（需 --features ct2）」
+
 ## [2026-10-07] docs/27 P1 落地：克隆产品化闭环 + 视频配音流水线
 
 ### P1-a 克隆产品化闭环（参考音频工程 + 音色库 GUI）
@@ -45,6 +125,43 @@
   视频减速 50/50 分摊（译制配音场景）留待后续；amix normalize=0 需
   ffmpeg ≥ 4.4，老版本请用默认替换模式
 
+## [2026-10-07] 失败诊断脱敏面板（GUI 错误链统一收口）
+
+- 落地 docs/27 第四节 B 的「失败诊断脱敏面板」：GUI 此前在结果面板原样
+  透传 anyhow 错误链（含模型绝对路径，存在泄露风险），现改为渲染期统一
+  收口——失败类消息不再直出原文。
+- **领域层 `votex_domain::shared/diagnosis.rs`**（零 IO，纯字符串处理，
+  9 个中文命名单测）：
+  - `diagnose()` 模式匹配错误链 → 中文一句话结论 + 「为什么？」原因解释 +
+    引擎文档页映射（模型缺失/校验失败/vocab_size 不兼容/音色缺转写/
+    参考音频契约/鉴权失败/网络/内存不足/ffmpeg/磁盘/权限/超时/取消/兜底）
+  - `sanitize()` 抹去 Windows 盘符 / UNC / Unix 绝对路径（→ `<路径>`）
+    与密钥碎片（`sk-***`、`Bearer ***`、`key=***`）；相对路径与 URL 保留
+- **GUI `page_template::result_message` 收口**：成功与校验提示保持原渲染；
+  失败类消息渲染诊断面板（红色结论 + 「为什么？」折叠 + 「详情（已脱敏）」
+  等宽折叠 + 「打开引擎文档」按钮跳转 `docs/engines/<页>`），全部 8 个
+  页面自动生效，state 结构零改动
+- **顺带修复既有编译错误**：`SubtitleEntry` 新增 `speaker` 字段后 4 处
+  初始化未同步（domain/app 测试与 infra 字幕策略）；speaker_diarization
+  对齐 sherpa-onnx 1.13 真实 API（`OfflineSpeakerSegmentationModelConfig`
+  为结构体而非枚举）——`cargo test -p votex-domain` 211 通过，GUI/infra
+  编译零错误零警告
+
+## [2026-10-07] 引擎文档三件套（docs/engines/）
+
+- 落地 docs/27 第四节 B 的「引擎文档规范化」：新增 `docs/engines/` 目录——
+  README（能力矩阵一张表 + 新引擎四项准入清单 + 已知怪癖速查）+ 23 个引擎页
+  （TTS 本地 4、ASR 本地 6 + 说话人分离、OCR 2、翻译 8、在线 TTS/ASR 2），
+  每页六节：用途 / 依赖 / 模型来源 / 能力 / 已知怪癖 / 测试锚点。
+- 事实澄清：本地 ASR（Whisper/Paraformer/Qwen3-ASR/FireRed/WeNet/分离）经
+  **sherpa-onnx 绑定（crate 1.13）**加载，模型必须用 sherpa-onnx 官方转换包；
+  CTranslate2 为 FFI **加速骨架**而非独立引擎（缺系统库须回落 ort 路径）；
+  RapidOCR 与官方 v5 mobile 权重逐字节相同，仅作评测对照组。
+- 准入清单四项：Windows 全量构建、金标准测试锚定（ASR 0.wav / TTS 闭环）、
+  registry + EngineCapability 注册一致、写引擎页——不全不合并。
+- 运行期权威数据仍以 `votex model list --json` 为准；EasyOCR 独立集成测试
+  与引擎决策日志为准入清单遗留项。
+
 ## [2026-10-07] VoiceStudio 对标分析（docs/27，合并版活文档）
 
 - 新增 `docs/27-VoiceStudio对标与借鉴分析.md`：对标开源全本地 ElevenLabs 替代品
@@ -52,7 +169,8 @@
   两次对标调研已**合并为唯一活文档**（原 28 号对标分析并入后删除），
   并对照代码库修正事实：OCR 实际为 PaddleOCR/EasyOCR（RapidOCR 仅评估测试）、
   ASR 本地 6 引擎含 Whisper（FireRedASR v2 为同引擎 CTC 变体）、
-  sherpa-onnx 仅为 Paraformer 模型包换源来源而非运行时依赖、
+  本地 ASR 经 sherpa-onnx 绑定（crate 1.13）加载、模型固定用官方转换包
+  （FunASR 自导出缺 vocab_size 会 abort 进程）、
   WeNet 时间戳实测仅首尾正确；P0（serve/能力自描述）与 P1（克隆闭环/视频配音）
   状态列标注落地情况。
 - 核心结论：不照搬其双运行时架构与碎片化引擎接入；可借鉴点按优先级排序——

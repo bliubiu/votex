@@ -15,6 +15,8 @@ pub enum Page {
     Dashboard,
     Tts,
     Asr,
+    Dictation,
+    Voices,
     Ocr,
     Translation,
     Batch,
@@ -29,6 +31,8 @@ impl Page {
             Page::Dashboard => "首页",
             Page::Tts => "语音合成",
             Page::Asr => "语音识别",
+            Page::Dictation => "实时听写",
+            Page::Voices => "音色库",
             Page::Ocr => "图文识别",
             Page::Translation => "文本翻译",
             Page::Batch => "批量任务",
@@ -43,6 +47,8 @@ impl Page {
             Page::Dashboard,
             Page::Tts,
             Page::Asr,
+            Page::Dictation,
+            Page::Voices,
             Page::Ocr,
             Page::Translation,
             Page::Batch,
@@ -110,6 +116,12 @@ pub struct AsrState {
     pub model: String,
     pub language: String,
     pub format: String,
+    /// 词级时间戳对齐（精准字幕 + words.json）
+    pub word_timestamps: bool,
+    /// 说话人分离（说话人标注字幕 + diarization.json）
+    pub diarize: bool,
+    /// 期望说话人数（0 = 自动聚类）
+    pub num_speakers: u32,
     pub is_running: bool,
     pub progress: f32,
     pub progress_text: String,
@@ -131,12 +143,56 @@ impl Default for AsrState {
             model: "whisper-base".to_string(),
             language: "zh".to_string(),
             format: "srt".to_string(),
+            word_timestamps: false,
+            diarize: false,
+            num_speakers: 0,
             is_running: false,
             progress: 0.0,
             progress_text: String::new(),
             result_message: String::new(),
             result_text: String::new(),
             cancel_token: None,
+        }
+    }
+}
+
+/// 实时听写页面状态
+///
+/// 不派生 Clone/Debug：事件接收器与听写句柄不可复制。
+/// 事件不走全局 task_tx（TaskEvent 无流式增量语义），
+/// 使用页面专属 channel，每帧在页面 show() 里 try_recv 拉取。
+pub struct DictationState {
+    /// 听写模型（当前支持 streaming-zipformer）
+    pub model: String,
+    /// 转写保存路径（空 = 不落盘）
+    pub output_path: String,
+    pub is_running: bool,
+    /// 当前未定稿文本（灰色展示，随识别覆盖）
+    pub partial_text: String,
+    /// 已定稿全文（可编辑）
+    pub final_text: String,
+    /// 录音累计时长（毫秒，用于显示）
+    pub elapsed_ms: u64,
+    /// 状态提示（就绪/错误/统计）
+    pub status_message: String,
+    /// 听写事件接收端（start 时创建）
+    pub event_rx: Option<std::sync::mpsc::Receiver<votex_app::use_case::dictation_use_case::DictationEvent>>,
+    /// 听写句柄（start 时创建，停止按钮触发）
+    pub handle: Option<Arc<std::sync::Mutex<votex_app::use_case::dictation_use_case::DictationHandle>>>,
+}
+
+impl Default for DictationState {
+    fn default() -> Self {
+        Self {
+            model: "streaming-zipformer".to_string(),
+            output_path: String::new(),
+            is_running: false,
+            partial_text: String::new(),
+            final_text: String::new(),
+            elapsed_ms: 0,
+            status_message: String::new(),
+            event_rx: None,
+            handle: None,
         }
     }
 }
@@ -362,6 +418,8 @@ pub struct PipelineStep {
 /// 视频生成页面状态
 #[derive(Debug, Clone)]
 pub struct VideoState {
+    /// 页面模式："generate"（AI 短视频生成）/ "dub"（视频配音）
+    pub mode: String,
     pub script: String,
     pub output_path: String,
     pub tts_engine: String,
@@ -374,6 +432,27 @@ pub struct VideoState {
     pub result_message: String,
     pub translated_keyword: String,
     pub material_preview_url: String,
+    // ---- 配音模式（dub）----
+    /// 源视频路径
+    pub dub_video_path: String,
+    /// ASR 引擎（识别原声）
+    pub dub_asr_engine: String,
+    /// 配音 TTS 引擎
+    pub dub_tts_engine: String,
+    /// 配音音色
+    pub dub_voice: String,
+    /// 配音语速
+    pub dub_speed: f32,
+    /// 翻译方向（空 = 不翻译，直接用原声文本配音）
+    pub dub_translate: String,
+    /// 单段音频最大加速倍率（时长拟合上限）
+    pub dub_max_tempo: f32,
+    /// 二次 ASR 质检（对配音结果再识别，验证可懂度）
+    pub dub_verify: bool,
+    /// 保留背景音（原音轨按低音量与配音混音）；false = 替换原音轨
+    pub dub_keep_bg: bool,
+    /// 输出目录
+    pub dub_output_dir: String,
     /// 当前任务的取消令牌（启动按钮创建，取消按钮触发）
     pub cancel_token: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
@@ -381,6 +460,7 @@ pub struct VideoState {
 impl Default for VideoState {
     fn default() -> Self {
         Self {
+            mode: "generate".to_string(),
             script: String::new(),
             output_path: "output.mp4".to_string(),
             tts_engine: "kokoro".to_string(),
@@ -393,7 +473,59 @@ impl Default for VideoState {
             result_message: String::new(),
             translated_keyword: String::new(),
             material_preview_url: String::new(),
+            dub_video_path: String::new(),
+            dub_asr_engine: "paraformer".to_string(),
+            dub_tts_engine: "kokoro".to_string(),
+            dub_voice: "zf_001".to_string(),
+            dub_speed: 1.0,
+            dub_translate: String::new(),
+            dub_max_tempo: 1.5,
+            dub_verify: true,
+            dub_keep_bg: false,
+            dub_output_dir: "output".to_string(),
             cancel_token: None,
+        }
+    }
+}
+
+/// 音色库页面状态（克隆音色管理）
+///
+/// 列表/添加/删除是毫秒级文件操作，直接在 UI 线程同步执行，
+/// 不走 task_runner。
+#[derive(Debug, Clone)]
+pub struct VoicesState {
+    /// 音色列表（进入页面/操作后刷新）
+    pub voices: Vec<votex_app::platform::tts::CloneVoiceMeta>,
+    /// 新音色名
+    pub new_name: String,
+    /// 参考音频路径
+    pub new_reference: String,
+    /// 参考音频转写（CosyVoice 必需）
+    pub new_transcript: String,
+    /// 入库时降噪
+    pub new_denoise: bool,
+    /// 引擎参考音频上限（秒，0 = 不截取）
+    pub new_max_ref_seconds: u64,
+    /// 待确认删除的音色名（二次确认弹层）
+    pub pending_remove: Option<String>,
+    /// 操作结果消息
+    pub message: Option<String>,
+    /// 当前试听的音色名
+    pub previewing: Option<String>,
+}
+
+impl Default for VoicesState {
+    fn default() -> Self {
+        Self {
+            voices: Vec::new(),
+            new_name: String::new(),
+            new_reference: String::new(),
+            new_transcript: String::new(),
+            new_denoise: true,
+            new_max_ref_seconds: 15,
+            pending_remove: None,
+            message: None,
+            previewing: None,
         }
     }
 }
@@ -467,6 +599,8 @@ pub struct AppState {
     pub config_path: String,
     pub tts: TtsState,
     pub asr: AsrState,
+    pub dictation: DictationState,
+    pub voices: VoicesState,
     pub ocr: OcrState,
     pub translation: TranslationState,
     pub batch: BatchState,
@@ -499,6 +633,8 @@ impl AppState {
             config_path: "application.yml".to_string(),
             tts: TtsState::default(),
             asr: AsrState::default(),
+            dictation: DictationState::default(),
+            voices: VoicesState::default(),
             ocr: OcrState::default(),
             translation: TranslationState::default(),
             batch: BatchState::default(),

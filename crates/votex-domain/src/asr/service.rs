@@ -99,6 +99,7 @@ mod tests {
                 start_time: Timestamp::from_millis(0),
                 end_time: Timestamp::from_millis(3000),
                 text: "你好世界".to_string(),
+                speaker: None,
             }],
             output_path: PathBuf::from("test.srt"),
         };
@@ -122,6 +123,7 @@ mod tests {
                 },
                 end_time: Timestamp::from_millis(70000),
                 text: "你好".to_string(),
+                speaker: None,
             }],
             output_path: PathBuf::from("test.lrc"),
         };

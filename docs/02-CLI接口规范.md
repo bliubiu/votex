@@ -62,7 +62,93 @@ votex tts -i cantonese.txt -o output.mp3 --engine indextts25 --voice default
 votex tts -i long_novel.txt -o audiobook.mp3 --segment-size 800 --segment-silence 500
 ```
 
+---
 
+### 2.1 多角色配音：角色扫描命令
+
+```
+votex role scan --input <小说文件> [选项]
+votex role voices [选项]
+```
+
+`role scan` 是多角色配音的**第一步**：从整本小说中提取角色候选表，
+消除「读完全书手工统计说话人 + 手写 role_map JSON」的成本。
+
+#### 参数（`role scan`）
+
+| 参数 | 类型 | 说明 | 示例 |
+|------|------|------|------|
+| `--input` / `-i` | 路径(必填) | 小说文件（txt/md/epub/docx/pdf，**自动探测 GBK/UTF-8**） | `-i novel.txt` |
+| `--out` / `-o` | 路径 | 保存角色表 JSON（可直接作为 `tts --role-map` 使用） | `-o roles.json` |
+| `--top` | 整数 | 返回候选上限（按台词数降序），默认 20 | `--top 30` |
+| `--assign-voices` | 布尔 | 自动分配音色，生成含 narrator/roles 的完整映射表 | `--assign-voices` |
+| `--json` | 布尔 | 以 JSON 输出到终端（不打印表格，便于重定向） | `--json` |
+| `--models-dir` | 路径 | 模型根目录（用于枚举可用音色），默认 `models` | `--models-dir D:\models` |
+
+#### 参数（`role voices`）
+
+| 参数 | 类型 | 说明 | 示例 |
+|------|------|------|------|
+| `--models-dir` | 路径 | 模型根目录，默认 `models` | `--models-dir D:\models` |
+
+#### 示例
+
+```bash
+# 1. 扫描小说，查看角色候选表（不写文件）
+votex role scan -i "《奶爸大文豪》.txt" --top 12
+
+# 2. 扫描并自动分配音色，保存角色表
+votex role scan -i novel.txt --top 20 --assign-voices -o roles.json
+
+# 3. 用生成的角色表合成多角色有声书
+votex tts -i novel.txt -o audiobook.wav --role-map roles.json
+
+# 4. JSON 输出供脚本/GUI 消费
+votex role scan -i novel.txt --assign-voices --json > roles.json
+
+# 5. 查看可用音色池（按性别分组）
+votex role voices
+```
+
+#### 输出说明
+
+终端输出为表格，含**角色 / 台词数 / 性别 / 已分配音色 / 首段台词**：
+
+```
+角色扫描: novel.txt
+耗时 976ms
+音色池: 103 个（中文女声 58 / 中文男声 45 / 其它 0）
+
+角色              台词数  性别      音色      首段台词（试听用）
+------------------------------------------------------------------------
+张重             1093  待确认?男声  zf_001  没关系，一会儿让你奶奶给你抹一点儿风油精…
+许雨涵             135  待确认?男声  zm_009  没关系，许老师算算价格，每天都来，一个月…
+```
+
+**「待确认」的含义**：说话人**无称谓线索**（如`张重`/`许雨涵`）时规则无法判定性别，
+输出为 `待确认?男声` 表示「按频次推测为男声，仅供参考」。此类音色分配只保证
+**不同角色听得出来不同**（男女交错 + 跳号选取），**不保证性别正确**——
+正确性别须用下方方式显式指定。
+
+#### 手工修正性别（推荐流程）
+
+`--assign-voices` 生成的是初稿。对性别有要求的场景，用文本编辑器调整 JSON：
+
+```json
+{
+  "narrator": "zf_001",
+  "dialogue_default": "zm_009",
+  "roles": {
+    "张重": "zm_009",
+    "芃芃": "xf_child"
+  }
+}
+```
+
+改完直接 `votex tts --role-map roles.json` 使用。
+GUI 的角色编排页（S4）会把这一步做成可试听的可视化操作。
+
+---
 
 ### 3. ASR 识别命令
 

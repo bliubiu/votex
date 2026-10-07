@@ -297,7 +297,7 @@ impl DialectQuality {
 }
 
 /// 方言支持信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DialectSupport {
     pub dialect: Dialect,
     pub quality: DialectQuality,

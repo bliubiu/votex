@@ -1,0 +1,31 @@
+id: ct2-opus-mt-zh-en
+name: OPUS-MT 中译英（CTranslate2 加速版）
+kind: Translation
+engine: CTranslate2
+# ⚠️ 本条目为「本地转换」产物：model.bin / shared_vocabulary.json 无法直接下载，
+#    由 `uv run scripts/convert_ct2.py`（官方转换器 + int8 量化）生成到
+#    models/translation/ct2-opus-mt-zh-en/。
+#    source.spm / target.spm 与源模型完全一致，可通过下方真实 URL 单独补齐。
+# sources 中 Helsinki-NLP 链接为**源模型溯源**（守卫要求 sources 非空），
+# 并非 model.bin / shared_vocabulary.json 的直接下载地址。
+files:
+  - name: model.bin
+    sha256: f8c942852c085d3a72eb0377d8ef236b4fc3be18001036d468b192161c874c47
+    sources:
+      huggingface: https://huggingface.co/Helsinki-NLP/opus-mt-zh-en
+      hf-mirror: https://hf-mirror.com/Helsinki-NLP/opus-mt-zh-en
+  - name: shared_vocabulary.json
+    sha256: 55d071d6c63a2dab993f00e77077eca76573ac6964990e2e80de7462344401fb
+    sources:
+      huggingface: https://huggingface.co/Helsinki-NLP/opus-mt-zh-en
+      hf-mirror: https://hf-mirror.com/Helsinki-NLP/opus-mt-zh-en
+  - name: source.spm
+    sha256: e27a3a1b539f4959ec72ea60e453f49156289f95d4e6000b29332efc45616203
+    sources:
+      huggingface: https://huggingface.co/Helsinki-NLP/opus-mt-zh-en/resolve/main/source.spm
+      hf-mirror: https://hf-mirror.com/Helsinki-NLP/opus-mt-zh-en/resolve/main/source.spm
+  - name: target.spm
+    sha256: 6a881f4717cd7265f53fea54fd3dc689c767c05338fac7a4590f3088cb2d7855
+    sources:
+      huggingface: https://huggingface.co/Helsinki-NLP/opus-mt-zh-en/resolve/main/target.spm
+      hf-mirror: https://hf-mirror.com/Helsinki-NLP/opus-mt-zh-en/resolve/main/target.spm

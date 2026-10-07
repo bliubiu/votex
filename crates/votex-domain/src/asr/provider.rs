@@ -27,4 +27,13 @@ pub trait AsrProvider: Send + Sync {
 
     /// 是否已加载
     fn is_loaded(&self) -> bool;
+
+    /// 引擎能力自描述
+    ///
+    /// 默认从 `engine_kind` / `sample_rate` 组装，无需加载模型即可调用。
+    /// 供 `votex model list --json` 与 `votex serve` 的程序化发现复用。
+    fn capability(&self) -> crate::model::capability::EngineCapability {
+        crate::model::capability::EngineCapability::profile(self.engine_kind())
+            .with_sample_rate(self.sample_rate())
+    }
 }

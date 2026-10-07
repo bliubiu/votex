@@ -92,10 +92,9 @@ VoiceStudio 最有价值的一课：**同一份领域层，两种交付形态**�
 ### B. 引擎能力自描述 + 文档规范化 + 准入门槛（★★★★☆）—— ⚠️ 部分落地
 
 - ✅ 已落地（docs/29）：`EngineCapability` / `CapabilityUseCase` / `model list --json`，每引擎上报可用性、克隆支持、方言、采样率。
-- ❌ 未落地——**每引擎一页文档**（`docs/engines/<engine>.md`：用途、依赖、registry 指针、已知怪癖——如 FunASR 本地导出缺 `vocab_size` 会 abort 进程，正是 Paraformer 换源 sherpa-onnx 官方转换包的教训，应沉淀成文档而非散在 commit）；
-- ❌ 未落地——**能力矩阵一张表**（克隆/情感/语种/方言/时间戳/流式逐引擎打勾）+ **准入清单**（新增引擎必须：跨平台可编译、有 0.wav 金标准集成测试锚定、注册进 registry、写文档页——四项不全不合并。这是"引擎广度只有在每个引擎都能工作的前提下才是资产，否则是负债"的工程化表达）；
+- ✅ 2026-10-07 落地——**引擎文档三件套**：`docs/engines/README.md`（能力矩阵一张表 + 四项准入清单 + 已知怪癖速查）+ 23 个引擎页（用途/依赖/模型来源/能力/已知怪癖/测试锚点），含 FunASR 自导出缺 `vocab_size` 会 abort 进程等教训沉淀（Paraformer 换源 sherpa-onnx 官方转换包即为案例）；
 - ❌ 未落地——**引擎决策日志**（accepted/abandoned，借鉴其 PROJECT_STATUS）；
-- ❌ 未落地——**失败诊断脱敏面板**：votex GUI 目前透传 anyhow 错误链（含模型绝对路径）。应做"用户可读中文消息 + 详情折叠"映射：通用原因 → 中文解释 + 跳转对应引擎文档页。VoiceStudio 经验：引擎探测失败信息**故意不原样展示**（防路径/凭据泄露），只给通用消息 + "Why?" 面板。
+- ✅ 2026-10-07 落地——**失败诊断脱敏面板**：领域层 `votex_domain::shared::diagnosis`（`diagnose()` 模式匹配错误链 → 中文结论/原因解释/文档页映射，`sanitize()` 抹去绝对路径与密钥碎片）+ GUI `page_template::result_message` 统一收口渲染（失败类消息不再透传原始错误链，改为红色结论 + "为什么？"折叠 + "详情（已脱敏）"折叠 + 打开引擎文档按钮）。VoiceStudio 经验：引擎探测失败信息**故意不原样展示**（防路径/凭据泄露），只给通用消息 + "Why?" 面板。
 
 ### C. 参考音频工程与克隆产品化（★★★★☆）—— ✅ 2026-10-07 落地
 
@@ -108,7 +107,7 @@ VoiceStudio 最有价值的一课：**同一份领域层，两种交付形态**�
 **落地情况**：`VideoDubUseCase`（提取音轨 → ASR 转写 → 中文分句 + 按字数比例分配原时间轴 → 翻译 → 逐段 TTS → 时长拟合（起点对齐 + atempo 上限）→ 实测段时长重建字幕 → 二次 ASR 质检 → 音轨替换/混入）+ `votex dub` 全参数入口 + GUI 视频工具页配音模式。设计取舍：段粒度操作不硬塞 StageFn 文件粒度注册表。
 
 **遗留（VoiceStudio 仍领先处）**：
-1. **词级时间戳对齐**：当前用"分句 + 字数比例"近似，VoiceStudio 用词级时间戳（WhisperX 式）驱动对齐。votex 升级路径：Paraformer 时间戳实测 ✅ 为第一优先（注意：sherpa-onnx 只是 Paraformer 模型包换源来源，**不是** votex 的运行时依赖；WeNet 时间戳实测 ⚠️ 仅首尾正确，不可作为依据）；
+1. **词级时间戳对齐**：当前用"分句 + 字数比例"近似，VoiceStudio 用词级时间戳（WhisperX 式）驱动对齐。votex 升级路径：Paraformer 时间戳实测 ✅ 为第一优先（votex 本地 ASR 经 **sherpa-onnx 绑定**（crate 1.13）加载，模型必须用 sherpa-onnx 官方转换包——FunASR 自导出缺 `vocab_size` 会 abort 进程；WeNet 时间戳实测 ⚠️ 仅首尾正确，不可作为依据）；
 2. **视频减速 50/50 分摊**（译制配音场景：音频变速 ≤ 上限后仍超时，音视频各分担一半）；
 3. **说话人分离**（多角色配音）：优先 IndexTTS-2.5 内置 cam++（docs/24 已评估），避免引入 pyannote（license + 权重下载墙不适合离线分发）；
 4. **人声分离**（Demucs ONNX 导出评估）→ 按段裁参考音频做多角色配音；
@@ -144,7 +143,7 @@ VoiceStudio 提供"把一句话粘给编码 Agent 即可安装"的 `docs/install
 ## 五、votex 应守住的差异化（VoiceStudio 覆盖不到或做不好）
 
 1. **单二进制、纯 Rust、无运行时**：VoiceStudio 要 Electron + Python + PyTorch（数 GB），votex 解压即用。
-2. **统一 ONNX Runtime 推理栈**：所有引擎同一种接入方式、同一套 registry（sha256 校验、二次确认删除）；VoiceStudio 六种接入方式并存是其主要维护负债。
+2. **统一 ONNX 生态推理栈**：ort 直连 + sherpa-onnx 绑定两种接入、同一套 registry（sha256 校验、二次确认删除）；VoiceStudio 六种接入方式并存是其主要维护负债。
 3. **OCR + TTS + ASR + 翻译四合一**：VoiceStudio 无 OCR，votex 唯一"人无我有"的整块能力。
 4. **本地翻译引擎栈**：HY-MT1.5 / NLLB-200 / M2M-100 / OPUS-MT / Qwen-MT / CTranslate2 全本地——VoiceStudio 翻译更依赖云 LLM。
 5. **中文 + 方言深度**：IndexTTS-2.5 粤语原生（docs/24/25 已完成移植蓝本），闽南/吴/客家路线明确。
@@ -172,8 +171,8 @@ VoiceStudio 是 **AGPL-3.0-only**。votex 是 **MIT**（`Cargo.toml` 已核实�
 | P0 ✅ | `votex serve`：HTTP + MCP + 能力自描述（复用 use_case/trait） | 2026-10-07 落地，见 docs/29 | WebSocket 流式、按 Agent 绑音色：中 |
 | P1 ✅ | 克隆产品化闭环（参考音频工程 + 音色库 UI） | 2026-10-07 落地（ref_audio / voice add / GUI 音色库） | 质量门槛细化：低 |
 | P1 ✅ | 视频配音流水线（时长拟合 + 二次 ASR 质检） | 2026-10-07 落地（VideoDubUseCase / votex dub / GUI） | 词级时间戳对齐、50/50 减速、说话人分离：中~大 |
-| P2 | 引擎文档三件套（每引擎一页 + 能力矩阵 + 准入清单）+ 决策日志 | 未落地 | 低 |
-| P2 | 失败诊断脱敏面板（GUI 错误链 → 中文解释 + 详情折叠） | 未落地 | 低 |
+| P2 ✅ | 引擎文档三件套（每引擎一页 + 能力矩阵 + 准入清单） | 2026-10-07 落地 `docs/engines/`（README + 23 页） | 引擎决策日志：低 |
+| P2 ✅ | 失败诊断脱敏面板（GUI 错误链 → 中文解释 + 详情折叠） | 2026-10-07 落地 `shared/diagnosis.rs` + GUI 诊断面板（9 单测） | CLI 错误行同构接入：低 |
 | P2 | 章级缓存键（有声书断点续跑命中） | 未落地 | 低 |
 | P2 | 说话人分离 + 人声分离（多角色配音） | 未落地 | 中 |
 | P2 | 合成音频水印/标记 + 合规钩子 | 未落地 | 低 |

@@ -345,6 +345,35 @@ pub struct CosyVoiceProvider {
 }
 
 impl CosyVoiceProvider {
+    /// 解析克隆音色 → (参考音频路径, 转写文本)
+    ///
+    /// CosyVoice 零样本克隆的 prompt 必须配套文字转写（条件 LLM 输入），
+    /// 缺转写的音色在此明确报错并给出修复指引。
+    fn resolve_clone_prompt(voice: &VoiceId) -> Result<(std::path::PathBuf, String), TtsError> {
+        let meta = super::voice_library::find_meta(&voice.id).ok_or_else(|| {
+            TtsError::SynthesisFailed(format!(
+                "克隆音色 '{}' 不在音色库中（models/voices/refs/），请先执行 voice add",
+                voice.id
+            ))
+        })?;
+        let wav = super::voice_library::base_dir().join(&meta.ref_file);
+        if !wav.exists() {
+            return Err(TtsError::SynthesisFailed(format!(
+                "克隆音色 '{}' 的参考音频丢失: {:?}（请重新 voice add）",
+                voice.id, wav
+            )));
+        }
+        let transcript = meta.transcript.ok_or_else(|| {
+            TtsError::SynthesisFailed(format!(
+                "克隆音色 '{}' 缺少参考音频转写文本，CosyVoice 克隆必需。\
+                 修复: voice remove {} --confirm 后重新 voice add --transcript \"参考音频里说的内容\"",
+                voice.id, voice.id
+            ))
+        })?;
+        tracing::info!("使用克隆音色 '{}': {:?}（转写 {} 字）", voice.id, wav, transcript.chars().count());
+        Ok((wav, transcript))
+    }
+
     pub fn new() -> Self {
         Self {
             tokenizer: EngineState::new(),
@@ -1701,14 +1730,23 @@ impl TtsProvider for CosyVoiceProvider {
     fn synthesize(
         &self,
         text: &str,
-        _voice: &VoiceId,
-        _params: &TtsParams,
+        voice: &VoiceId,
+        params: &TtsParams,
     ) -> Result<AudioData, TtsError> {
+        // 情感参数能力边界：CosyVoice 以参考音频条件音色，无独立情感通道
+        static EMOTION_WARN: super::EmotionWarnOnce = super::EmotionWarnOnce::new();
+        EMOTION_WARN.warn_if_unsupported("CosyVoice 3.0", params);
+
         let base_dir = model_base_dir();
+        // 音色解析：default → 模型自带 prompt；其余 → 克隆音色库
+        // （models/voices/refs/，voice add 入库）。此前 _voice 被完全忽略，
+        // 传任何音色名都用默认 prompt，克隆音色形同虚设。
         // 优先使用中文 prompt（zh_prompt.wav + zh_prompt.txt 转写）：零样本克隆时
         // prompt 与目标文本语言一致可显著提升中文合成的稳定性与音色自然度；
         // 未配置时回落到英文示例 prompt。
-        let (prompt_wav_path, prompt_text) = {
+        let (prompt_wav_path, prompt_text) = if voice.id != "default" {
+            Self::resolve_clone_prompt(voice)?
+        } else {
             let zh_wav = base_dir.join("prompts/zh_prompt.wav");
             let zh_txt = base_dir.join("prompts/zh_prompt.txt");
             if zh_wav.exists() && zh_txt.exists() {
@@ -1859,9 +1897,18 @@ impl TtsProvider for CosyVoiceProvider {
     }
     
     fn list_voices(&self) -> Vec<VoiceId> {
-        vec![
-            VoiceId::new("default", "默认音色", EngineKind::CosyVoice3),
-        ]
+        // default = 模型自带 prompt（prompts/zh_prompt.wav 或英文示例）；
+        // 其余 = 克隆音色库（models/voices/refs/，voice add 入库的零样本音色）。
+        // 此前只返回 default，克隆音色在 GUI/CLI 音色下拉中完全不可见。
+        let mut voices = vec![VoiceId::new("default", "默认音色", EngineKind::CosyVoice3)];
+        for meta in super::voice_library::list() {
+            let label = match &meta.transcript {
+                Some(_) => format!("克隆音色（{:.1}s，含转写）", meta.duration_ms as f64 / 1000.0),
+                None => format!("克隆音色（{:.1}s，缺转写，CosyVoice 不可用）", meta.duration_ms as f64 / 1000.0),
+            };
+            voices.push(VoiceId::new(&meta.name, &label, EngineKind::CosyVoice3));
+        }
+        voices
     }
     
     fn sample_rate(&self) -> u32 {

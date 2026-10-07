@@ -97,21 +97,46 @@ impl TtsPage {
                 ui.end_row();
 
                 ui.label("音色:");
+                // 音色下拉动态化：Kokoro 扫音色池文件，克隆引擎（IndexTTS-2.5 /
+                // CosyVoice3）合并音色库 `voice add` 入库音色，替代此前硬编码列表
                 egui::ComboBox::from_id_salt("tts_voice")
                     .selected_text(&state.tts.voice)
                     .show_ui(ui, |ui| {
-                        if state.tts.engine == "kokoro" {
-                            ui.selectable_value(&mut state.tts.voice, "zf_001".to_string(), "中文女声 001");
-                            ui.selectable_value(&mut state.tts.voice, "zf_002".to_string(), "中文女声 002");
-                            ui.selectable_value(&mut state.tts.voice, "zf_003".to_string(), "中文女声 003");
-                            ui.selectable_value(&mut state.tts.voice, "zf_004".to_string(), "中文女声 004");
-                            ui.selectable_value(&mut state.tts.voice, "zf_005".to_string(), "中文女声 005");
-                            ui.separator();
-                            ui.selectable_value(&mut state.tts.voice, "zm_009".to_string(), "中文男声 009");
-                            ui.selectable_value(&mut state.tts.voice, "zm_010".to_string(), "中文男声 010");
-                            ui.selectable_value(&mut state.tts.voice, "zm_011".to_string(), "中文男声 011");
-                        } else {
-                            ui.selectable_value(&mut state.tts.voice, "default".to_string(), "默认");
+                        match state.tts.engine.as_str() {
+                            "kokoro" => {
+                                let models_dir = std::path::PathBuf::from(&state.models_dir);
+                                let pool = votex_app::platform::tts::list_engine_voices(&models_dir);
+                                if pool.is_empty() {
+                                    // 音色池缺失时兜底：至少给一个可选项
+                                    ui.selectable_value(&mut state.tts.voice, "zf_001".to_string(), "中文女声 001");
+                                }
+                                for v in &pool {
+                                    let label = if v.display_name.is_empty() {
+                                        v.voice_id.clone()
+                                    } else {
+                                        v.display_name.clone()
+                                    };
+                                    ui.selectable_value(&mut state.tts.voice, v.voice_id.clone(), label);
+                                }
+                            }
+                            "indextts25" | "cosyvoice3" => {
+                                ui.selectable_value(&mut state.tts.voice, "default".to_string(), "默认");
+                                let clone_voices = votex_app::platform::tts::list_voices();
+                                if !clone_voices.is_empty() {
+                                    ui.separator();
+                                }
+                                for meta in &clone_voices {
+                                    let tip = if meta.transcript.is_some() {
+                                        meta.name.clone()
+                                    } else {
+                                        format!("{}（无转写，仅 IndexTTS-2.5 可用）", meta.name)
+                                    };
+                                    ui.selectable_value(&mut state.tts.voice, meta.name.clone(), tip);
+                                }
+                            }
+                            _ => {
+                                ui.selectable_value(&mut state.tts.voice, "default".to_string(), "默认");
+                            }
                         }
                     });
                 ui.end_row();

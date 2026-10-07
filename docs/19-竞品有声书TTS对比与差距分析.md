@@ -158,7 +158,7 @@
 | T1 语义断句 | ✅ | `domain/tts/service.rs`：引号感知切分（引号内被切断时下一段续开引号）、小数点/缩写点不切句 |
 | T2 多角色配音 | ✅ | `domain/tts/role.rs`（引号配对切分台词/叙述 + 说话人动词启发式 + RoleVoiceMap）；`app/tts_use_case.rs`（PlanSegment 增加 voice_override/is_dialogue，台词与叙述不合并同段）；CLI `tts --role-map map.json` |
 | T3 格式输入 | ✅ | `infra/document/`（EPUB=container.xml→OPF→spine→XHTML，DOCX=w:p/w:t，PDF=pdf-extract 文本层）；CLI `tts -i book.epub/docx/pdf` 直接输入；提取文本可无缝对接章节切分（集成测试验证） |
-| T4 音色库 | ✅ | `infra/tts/voice_library.rs`（WAV 校验 3s~10min、可选自动降噪、models/voices/refs/ 存档 + 元数据、删除需 --confirm）；CLI `voice add/list/remove`。**注**：参考音频 → embedding 的提取依赖 speaker_encoder.onnx（未随模型分发），当前入库的参考音频供支持零样本克隆的引擎直接使用 |
+| T4 音色库 | ✅ | `infra/tts/voice_library.rs`（WAV 校验 3s~10min、可选自动降噪、models/voices/refs/ 存档 + 元数据、删除需 --confirm）；CLI `voice add/list/remove`。2026-10-07 补全（docs/27 P1）：`--max-ref-seconds` 上限契约（best_window 截取/有转写拒绝，`infra/audio/ref_audio.rs`）、全静音拒绝、IndexTTS-2.5 回落统一音色库（prompts/ → refs/）、GUI 音色库页（入库/试听/删除二次确认）与 TTS 页音色下拉动态化。**注**：参考音频 → embedding 的提取依赖 speaker_encoder.onnx（未随模型分发），当前入库的参考音频供支持零样本克隆的引擎直接使用 |
 | T5 后处理 | ✅ | `infra/audio/mp3.rs`：`EncodeOpts { loudnorm: EBU R128 I=-16/TP=-1.5, tempo: atempo 0.5~2.0 }`，wav_to_mp3/m4a/flac/m4b 全部支持；CLI `tts --loudnorm --atempo 1.25` |
 | T6 最小播放器 | ✅ | `gui/widgets/audio_player.rs` 重写：倍速（0.75~2.0x）、章节下拉跳转+当前章高亮（读 `{音频}.chapters.json`，合成时自动写出）、拖动进度条 seek、断点续听（`playback_progress` 表，SQLite）、时间显示 HH:MM:SS |
 | T7 云引擎 | 未实施 | 按需后续 |

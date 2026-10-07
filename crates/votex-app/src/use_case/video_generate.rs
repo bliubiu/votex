@@ -142,7 +142,7 @@ impl VideoGenerateUseCase {
                 cancel.as_deref(),
             )
             .context("ASR 识别失败")?;
-            Some(subtitle_path.clone())
+            Some(subtitle_path)
         } else {
             None
         };

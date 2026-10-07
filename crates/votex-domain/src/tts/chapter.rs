@@ -18,8 +18,8 @@ pub struct Chapter {
     pub body: String,
 }
 
-/// 章节单位字
-const CHAPTER_UNITS: &[char] = &['章', '回', '卷', '节', '篇', '部', '集', '话', '幕', '场'];
+/// 章节单位字（pub(crate)：role.rs 的噪声过滤复用同一套语义，避免两处定义漂移）
+pub(crate) const CHAPTER_UNITS: &[char] = &['章', '回', '卷', '节', '篇', '部', '集', '话', '幕', '场'];
 
 /// 合法的编号字符（中文数字/阿拉伯数字/间隔符）
 fn is_numberish(c: char) -> bool {

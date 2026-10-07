@@ -112,6 +112,7 @@ impl FastSubtitleGenerator {
                 start_time: Timestamp::from_millis(current_time_ms),
                 end_time: Timestamp::from_millis(end_time_ms),
                 text: sentence.clone(),
+                speaker: None,
             });
 
             current_time_ms = end_time_ms;
@@ -154,6 +155,7 @@ impl FastSubtitleGenerator {
                     start_time: Timestamp::from_millis(sentence_start_ms as u64),
                     end_time: Timestamp::from_millis(wt.end_ms as u64),
                     text: sentence_words.join(" "),
+                    speaker: None,
                 });
                 index += 1;
                 word_index += sentence_words.len();
@@ -172,6 +174,7 @@ impl FastSubtitleGenerator {
                 start_time: Timestamp::from_millis(sentence_start_ms as u64),
                 end_time: Timestamp::from_millis(last_wt.end_ms as u64),
                 text: sentence_words.join(" "),
+                speaker: None,
             });
         }
 
@@ -249,7 +252,7 @@ impl PreciseSubtitleGenerator {
                     .collect::<Vec<_>>()
                     .join(" ");
 
-                entries.push(SubtitleEntry { index, start_time: start_ts, end_time: end_ts, text });
+                entries.push(SubtitleEntry { index, start_time: start_ts, end_time: end_ts, text, speaker: None });
                 index += 1;
                 seg_start = end_pos + 1;
             }
@@ -265,7 +268,7 @@ impl PreciseSubtitleGenerator {
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            entries.push(SubtitleEntry { index, start_time: start_ts, end_time: end_ts, text });
+            entries.push(SubtitleEntry { index, start_time: start_ts, end_time: end_ts, text, speaker: None });
         }
 
         entries

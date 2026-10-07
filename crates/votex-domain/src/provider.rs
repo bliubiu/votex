@@ -35,6 +35,8 @@ pub enum ProviderCapability {
     /// 不是业务能力，而是所有 ONNX 能力的**前置依赖**。
     /// 单列变体而非塞进某一类，避免 GUI 按能力分组时把 ORT 显示成某种业务引擎。
     Runtime,
+    /// 说话人分离（说话人分割 + 嵌入提取 + 聚类）
+    SpeakerDiarization,
 }
 
 impl ProviderCapability {
@@ -47,6 +49,21 @@ impl ProviderCapability {
             ProviderCapability::Translation => "翻译",
             ProviderCapability::VideoMaterial => "视频素材",
             ProviderCapability::Runtime => "运行时",
+            ProviderCapability::SpeakerDiarization => "说话人分离",
+        }
+    }
+
+    /// 稳定机器标识（小写），供 API / Agent 程序化判断，区别于中文 `display_name`
+    pub fn code(&self) -> &'static str {
+        match self {
+            ProviderCapability::Tts => "tts",
+            ProviderCapability::Asr => "asr",
+            ProviderCapability::Ocr => "ocr",
+            ProviderCapability::Llm => "llm",
+            ProviderCapability::Translation => "translation",
+            ProviderCapability::VideoMaterial => "video",
+            ProviderCapability::Runtime => "runtime",
+            ProviderCapability::SpeakerDiarization => "speaker_diarization",
         }
     }
 }
@@ -130,7 +147,8 @@ pub fn engine_kind_to_capability(kind: &EngineKind) -> ProviderCapability {
         | EngineKind::AzureAsr
         | EngineKind::AliyunAsr
         | EngineKind::FireRedAsr
-        | EngineKind::WeNet => ProviderCapability::Asr,
+        | EngineKind::WeNet
+        | EngineKind::StreamingZipformer => ProviderCapability::Asr,
 
         EngineKind::PaddleOCR
         | EngineKind::EasyOcr => ProviderCapability::Ocr,
@@ -154,6 +172,7 @@ pub fn engine_kind_to_capability(kind: &EngineKind) -> ProviderCapability {
         | EngineKind::Coverr => ProviderCapability::VideoMaterial,
 
         EngineKind::OnnxRuntime => ProviderCapability::Runtime,
+        EngineKind::SpeakerDiarization => ProviderCapability::SpeakerDiarization,
     }
 }
 

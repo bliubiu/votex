@@ -1,0 +1,25 @@
+# 说话人分离（Pyannote 分割 + 3D-Speaker ERes2Net 嵌入）
+#
+# 说明：
+# - 分割模型：sherpa-onnx 官方发布包为 tar.bz2，逐成员提取落位（archive: tarbz2），
+#   包内 model.onnx 提取为 segmentation.onnx。
+# - 嵌入模型：3D-Speaker ERes2Net base（中文说话人验证，16kHz），
+#   GitHub release 单文件（注意 release 目录名 speaker-reconginition-models 为官方拼写）。
+# - sha256 暂未固定，完整性由加载失败兜底。
+id: speaker-diarization
+name: 说话人分离
+kind: Asr
+engine: SpeakerDiarization
+files:
+  - name: segmentation.onnx
+    required: true
+    archive:
+      type: tarbz2
+      member: sherpa-onnx-pyannote-segmentation-3-0/model.onnx
+    sources:
+      github: https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
+
+  - name: embedding.onnx
+    required: true
+    sources:
+      github: https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-reconginition-models/3dspeaker_speech_eres2net_base_sv_zh-cn_3dspeaker_16k.onnx

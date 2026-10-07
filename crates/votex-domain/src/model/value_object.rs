@@ -98,6 +98,8 @@ pub enum EngineKind {
     FireRedAsr,
     /// WeNet Conformer (ONNX)
     WeNet,
+    /// 流式 Zipformer（ONNX，实时听写，中英混合）
+    StreamingZipformer,
 
     // ===== OCR 引擎 =====
     /// PaddleOCR (PP-OCRv6)
@@ -133,6 +135,10 @@ pub enum EngineKind {
     /// CTranslate2 优化引擎
     CTranslate2,
 
+    // ===== 说话人分离 =====
+    /// 说话人分离（Sherpa-Onnx Pyannote 分割 + x-vector/ECAPA 嵌入）
+    SpeakerDiarization,
+
     // ===== 推理运行时 =====
     /// ONNX Runtime 动态库本身（`load-dynamic` 运行时依赖，非模型）
     OnnxRuntime,
@@ -157,21 +163,23 @@ impl EngineKind {
             EngineKind::Whisper | EngineKind::SenseVoice
                 | EngineKind::Paraformer | EngineKind::Qwen3Asr
                 | EngineKind::AzureAsr | EngineKind::AliyunAsr
-                | EngineKind::FireRedAsr | EngineKind::WeNet => ModelKind::Asr,
+                | EngineKind::FireRedAsr | EngineKind::WeNet
+                | EngineKind::StreamingZipformer => ModelKind::Asr,
 
             EngineKind::PaddleOCR | EngineKind::EasyOcr => ModelKind::Ocr,
 
             // 推理运行时：不是可 load() 的模型，但需要下载与完整性校验
             EngineKind::OnnxRuntime => ModelKind::Runtime,
 
-            // LLM/翻译/素材不需要模型文件
+            // LLM/翻译/素材/说话人分离不需要模型文件
             EngineKind::DeepSeek | EngineKind::OpenAi
                 | EngineKind::QwenLlm | EngineKind::Gemini
                 | EngineKind::Ollama | EngineKind::AzureLlm
                 | EngineKind::OpusMt | EngineKind::QwenMt | EngineKind::Nllb
                 | EngineKind::M2m100 | EngineKind::HyMt1_5 | EngineKind::CTranslate2
                 | EngineKind::Pexels | EngineKind::Pixabay
-                | EngineKind::Coverr => ModelKind::Tts, // placeholder, 不用于模型管理
+                | EngineKind::Coverr
+                | EngineKind::SpeakerDiarization => ModelKind::Tts, // placeholder, 不用于模型管理
         }
     }
 
@@ -197,6 +205,7 @@ impl EngineKind {
             EngineKind::AliyunAsr => "aliyun-asr",
             EngineKind::FireRedAsr => "firered-asr",
             EngineKind::WeNet => "wenet",
+            EngineKind::StreamingZipformer => "streaming-zipformer",
             EngineKind::PaddleOCR => "paddleocr",
             EngineKind::EasyOcr => "easyocr",
             EngineKind::DeepSeek => "deepseek",
@@ -214,6 +223,7 @@ impl EngineKind {
             EngineKind::Pexels => "pexels",
             EngineKind::Pixabay => "pixabay",
             EngineKind::Coverr => "coverr",
+            EngineKind::SpeakerDiarization => "speaker-diarization",
             EngineKind::OnnxRuntime => "onnxruntime",
         }
     }
@@ -237,6 +247,7 @@ impl EngineKind {
             "aliyun-asr" | "aliyunasr" => Some(EngineKind::AliyunAsr),
             "firered-asr" | "fireredasr" => Some(EngineKind::FireRedAsr),
             "wenet" => Some(EngineKind::WeNet),
+            "streaming-zipformer" | "streaming" => Some(EngineKind::StreamingZipformer),
             "paddleocr" | "paddle" => Some(EngineKind::PaddleOCR),
             "easyocr" => Some(EngineKind::EasyOcr),
             "deepseek" => Some(EngineKind::DeepSeek),
@@ -254,8 +265,119 @@ impl EngineKind {
             "pexels" => Some(EngineKind::Pexels),
             "pixabay" => Some(EngineKind::Pixabay),
             "coverr" => Some(EngineKind::Coverr),
+            "speaker-diarization" | "diarization" => Some(EngineKind::SpeakerDiarization),
             _ => None,
         }
+    }
+
+    /// 中文显示名（能力自描述 / GUI 下拉 / 服务 API 共用）
+    ///
+    /// 与 [`EngineKind::as_str`] 的机器标识区分：这里是给人看的名字。
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            EngineKind::Kokoro => "Kokoro-82M",
+            EngineKind::IndexTTS25 => "IndexTTS-2.5",
+            EngineKind::CosyVoice3 => "CosyVoice 3",
+            EngineKind::Qwen3Tts => "Qwen3-TTS",
+            EngineKind::AzureTts => "Azure 语音合成",
+            EngineKind::AliyunTts => "阿里云语音合成",
+            EngineKind::Whisper => "Whisper",
+            EngineKind::SenseVoice => "SenseVoice",
+            EngineKind::Paraformer => "Paraformer",
+            EngineKind::Qwen3Asr => "Qwen3-ASR",
+            EngineKind::AzureAsr => "Azure 语音识别",
+            EngineKind::AliyunAsr => "阿里云语音识别",
+            EngineKind::FireRedAsr => "FireRedASR",
+            EngineKind::WeNet => "WeNet Conformer",
+            EngineKind::StreamingZipformer => "流式 Zipformer（实时听写）",
+            EngineKind::PaddleOCR => "PaddleOCR",
+            EngineKind::EasyOcr => "EasyOCR",
+            EngineKind::DeepSeek => "DeepSeek",
+            EngineKind::OpenAi => "OpenAI 兼容",
+            EngineKind::QwenLlm => "通义千问",
+            EngineKind::Gemini => "Google Gemini",
+            EngineKind::Ollama => "Ollama",
+            EngineKind::AzureLlm => "Azure OpenAI",
+            EngineKind::OpusMt => "OPUS-MT",
+            EngineKind::QwenMt => "Qwen-MT",
+            EngineKind::Nllb => "NLLB-200",
+            EngineKind::M2m100 => "M2M-100",
+            EngineKind::HyMt1_5 => "HY-MT1.5",
+            EngineKind::CTranslate2 => "CTranslate2",
+            EngineKind::OnnxRuntime => "ONNX Runtime",
+            EngineKind::Pexels => "Pexels",
+            EngineKind::Pixabay => "Pixabay",
+            EngineKind::Coverr => "Coverr",
+            EngineKind::SpeakerDiarization => "说话人分离",
+        }
+    }
+
+    /// 是否为在线 API 引擎（文本/音频会离开本机）
+    ///
+    /// 离线优先是 votex 的硬约束：能力自描述显式区分本地/在线，
+    /// 供 CLI / 服务 API 提示用户「此引擎需要联网并可能上传内容」。
+    pub fn is_online(&self) -> bool {
+        matches!(
+            self,
+            EngineKind::AzureTts
+                | EngineKind::AliyunTts
+                | EngineKind::AzureAsr
+                | EngineKind::AliyunAsr
+                | EngineKind::DeepSeek
+                | EngineKind::OpenAi
+                | EngineKind::QwenLlm
+                | EngineKind::Gemini
+                | EngineKind::AzureLlm
+                | EngineKind::QwenMt
+                | EngineKind::Pexels
+                | EngineKind::Pixabay
+                | EngineKind::Coverr
+        )
+    }
+
+    /// 是否支持零样本音色克隆
+    pub fn supports_zero_shot_clone(&self) -> bool {
+        matches!(self, EngineKind::IndexTTS25 | EngineKind::CosyVoice3)
+    }
+
+    /// 全部引擎（能力自描述 / 服务 API 枚举用）
+    pub fn all() -> Vec<EngineKind> {
+        vec![
+            EngineKind::Kokoro,
+            EngineKind::IndexTTS25,
+            EngineKind::CosyVoice3,
+            EngineKind::Qwen3Tts,
+            EngineKind::AzureTts,
+            EngineKind::AliyunTts,
+            EngineKind::Whisper,
+            EngineKind::SenseVoice,
+            EngineKind::Paraformer,
+            EngineKind::Qwen3Asr,
+            EngineKind::AzureAsr,
+            EngineKind::AliyunAsr,
+            EngineKind::FireRedAsr,
+            EngineKind::WeNet,
+            EngineKind::StreamingZipformer,
+            EngineKind::PaddleOCR,
+            EngineKind::EasyOcr,
+            EngineKind::DeepSeek,
+            EngineKind::OpenAi,
+            EngineKind::QwenLlm,
+            EngineKind::Gemini,
+            EngineKind::Ollama,
+            EngineKind::AzureLlm,
+            EngineKind::OpusMt,
+            EngineKind::QwenMt,
+            EngineKind::Nllb,
+            EngineKind::M2m100,
+            EngineKind::HyMt1_5,
+            EngineKind::CTranslate2,
+            EngineKind::OnnxRuntime,
+            EngineKind::Pexels,
+            EngineKind::Pixabay,
+            EngineKind::Coverr,
+            EngineKind::SpeakerDiarization,
+        ]
     }
 }
 

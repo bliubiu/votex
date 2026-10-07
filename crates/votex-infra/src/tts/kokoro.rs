@@ -11,7 +11,7 @@ use votex_domain::model::value_object::EngineKind;
 use votex_domain::shared::value_object::AudioData;
 use votex_domain::tts::provider::TtsProvider;
 use votex_domain::tts::tokenizer::TextTokenizer;
-use votex_domain::tts::value_object::{TtsParams, VoiceId};
+use votex_domain::tts::value_object::{TtsParams, VoiceId, VoiceMeta};
 
 use super::kokoro_g2p;
 use crate::shared::{EngineState, ModelFileLocator, OrtSessionFactory};
@@ -92,6 +92,56 @@ fn workspace_root_for_test() -> PathBuf {
     dir.pop();
     dir.pop();
     dir
+}
+
+/// 音色 ID → 展示名（`list_voices` 与 `list_voice_pool` 共用的**唯一**前缀知识来源）
+///
+/// 性别与语种推断见 `votex_domain::tts::value_object`的
+/// `VoiceGender::from_voice_id` / `VoiceLocale::from_voice_id`——
+/// 本函数只负责给人看的名字，不再自行判断前缀。
+fn voice_display_name(stem: &str) -> String {
+    match stem.split_once('_') {
+        Some((prefix, no)) => match (prefix, votex_domain::tts::value_object::VoiceLocale::from_voice_id(stem)) {
+            ("zf", _) => format!("中文女声{}", no),
+            ("zm", _) => format!("中文男声{}", no),
+            ("af", _) => format!("英文女声{}", no),
+            ("am", _) => format!("英文男声{}", no),
+            ("bf", _) => format!("英式女声{}", no),
+            ("bm", _) => format!("英式男声{}", no),
+            _ => stem.to_string(),
+        },
+        None => stem.to_string(),
+    }
+}
+
+/// 枚举 Kokoro 音色池（**无需加载模型**，仅扫描 `voices/*.bin` 文件名）
+///
+/// 存在的理由：多角色配音的角色表生成需要「有哪些音色可选」，
+/// 而 `list_voices()` 要求 provider 已 `load_model()`（否则 config 为空返回 vec![]）。
+/// 角色扫描是纯文本操作，不该被迫加载 80M 模型。
+///
+/// `tts_models_dir` 传 `models/tts/` 目录（本函数自行拼模型名与 `voices/`）。
+/// 音色是模型附带的 `.bin` 向量，识别文件存在即可，无需读内容或校验。
+pub fn list_voice_pool(tts_models_dir: &std::path::Path) -> Vec<VoiceMeta> {
+    use votex_domain::model::value_object::EngineKind;
+    use votex_domain::tts::value_object::VoiceGender;
+
+    let voices_dir = tts_models_dir.join("kokoro-82m-v1.1-zh").join("voices");
+    let mut voices: Vec<VoiceMeta> = std::fs::read_dir(&voices_dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("bin"))
+                .filter_map(|e| {
+                    let stem = e.path().file_stem()?.to_str()?.to_string();
+                    let gender = VoiceGender::from_voice_id(&stem);
+                    Some(VoiceMeta::new(&stem, &voice_display_name(&stem), EngineKind::Kokoro, gender))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    voices.sort_by(|a, b| a.voice_id.cmp(&b.voice_id));
+    voices
 }
 
 // ===================== G2P 策略 =====================
@@ -377,6 +427,10 @@ impl TtsProvider for KokoroProvider {
         voice: &VoiceId,
         params: &TtsParams,
     ) -> Result<AudioData, TtsError> {
+        // 情感参数能力边界：Kokoro 音色是预生成的风格向量，无情感控制通道
+        static EMOTION_WARN: super::EmotionWarnOnce = super::EmotionWarnOnce::new();
+        EMOTION_WARN.warn_if_unsupported("Kokoro", params);
+
         let config = self.config.lock().map_err(|e| {
             TtsError::SynthesisFailed(format!("config 锁失败: {}", e))
         })?;
@@ -525,22 +579,8 @@ impl TtsProvider for KokoroProvider {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) == Some("bin") {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        let desc = if stem.starts_with("zf_") {
-                            format!("中文女声{}", &stem[3..])
-                        } else if stem.starts_with("zm_") {
-                            format!("中文男声{}", &stem[3..])
-                        } else if stem.starts_with("af_") {
-                            format!("英文女声{}", &stem[3..])
-                        } else if stem.starts_with("am_") {
-                            format!("英文男声{}", &stem[3..])
-                        } else if stem.starts_with("bf_") {
-                            format!("英式女声{}", &stem[3..])
-                        } else if stem.starts_with("bm_") {
-                            format!("英式男声{}", &stem[3..])
-                        } else {
-                            stem.to_string()
-                        };
-                        voices.push(VoiceId::new(stem, &desc, EngineKind::Kokoro));
+                        // 展示名与 list_voice_pool 共用同一份前缀知识
+                        voices.push(VoiceId::new(stem, &voice_display_name(stem), EngineKind::Kokoro));
                     }
                 }
             }

@@ -17,7 +17,9 @@ use std::process::Command;
 const DEFAULT_FFMPEG_PATH: &str = r"C:\Apps\ffmpeg\bin\ffmpeg.exe";
 
 /// 查找系统中可用的 ffmpeg 可执行文件路径
-fn find_ffmpeg() -> Option<String> {
+///
+/// 供本 crate 内其他 ffmpeg 调用方（如 video::dub_ops）复用同一查找优先级。
+pub(crate) fn find_ffmpeg() -> Option<String> {
     // 1. 环境变量 FFMPEG_PATH
     if let Ok(path) = std::env::var("FFMPEG_PATH") {
         if Path::new(&path).exists() {
@@ -36,6 +38,11 @@ fn find_ffmpeg() -> Option<String> {
     }
 
     None
+}
+
+/// `find_ffmpeg` 的别名导出（模块外调用名更明确）
+pub(crate) fn find_ffmpeg_path() -> Option<String> {
+    find_ffmpeg()
 }
 
 /// 检查 ffmpeg 是否可用

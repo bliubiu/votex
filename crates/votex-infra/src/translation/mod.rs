@@ -8,6 +8,7 @@
 //! - NLLB-200 ONNX 离线翻译（200+ 语言）
 //! - M2M-100 ONNX 离线翻译（100 语言）
 //! - HY-MT1.5 Decoder-only ONNX 离线翻译
+//! - CTranslate2 加速后端（`ct2` feature 门控，int8 量化，需本地转换模型）
 //!
 //! # 模型会话池
 //!
@@ -117,7 +118,19 @@ pub fn create_translation_provider_with_dir(
             qwen_mt::QwenMtProvider::new().map_err(|e| e.to_string())?,
         )),
 
-        "ctranslate2" => Ok(Box::new(ctranslate2::CTranslate2Provider::new())),
+        "ctranslate2" => {
+            let provider = ctranslate2::CTranslate2Provider::new();
+            if let Some(dir) = resolve_model_dir(
+                models_dir,
+                &["ct2-opus-mt-zh-en", "opus-mt-zh-en-ct2"],
+                "model.bin",
+            ) {
+                provider
+                    .load_from_dir(&dir)
+                    .map_err(|e| format!("加载 ctranslate2 模型失败: {}", e))?;
+            }
+            Ok(Box::new(provider))
+        }
 
         "opus-mt" => {
             let provider = opus_mt::OpusMtProvider::new();
@@ -179,8 +192,24 @@ fn create_offline_provider(
 }
 
 /// 列出所有可用引擎名（供 CLI / GUI 使用）
+///
+/// CTranslate2 加速后端仅在 `ct2` feature 启用时进入可选列表：
+/// 默认构建下的降级形态只是构建引导骨架，列出来反而误导用户。
 pub fn list_engine_names() -> Vec<&'static str> {
-    vec!["dict", "opus-mt", "nllb-200", "m2m-100", "hy-mt-1.5", "qwen-mt", "llm"]
+    #[cfg(not(feature = "ct2"))]
+    return vec!["dict", "opus-mt", "nllb-200", "m2m-100", "hy-mt-1.5", "qwen-mt", "llm"];
+
+    #[cfg(feature = "ct2")]
+    return vec![
+        "dict",
+        "opus-mt",
+        "ctranslate2",
+        "nllb-200",
+        "m2m-100",
+        "hy-mt-1.5",
+        "qwen-mt",
+        "llm",
+    ];
 }
 
 #[cfg(test)]
@@ -246,9 +275,17 @@ mod tests {
         for n in ["dict", "opus-mt", "nllb-200", "m2m-100", "hy-mt-1.5"] {
             assert!(names.contains(&n), "缺少引擎: {}", n);
         }
+
+        // CTranslate2 仅在 ct2 feature 启用后进入可选列表
+        #[cfg(not(feature = "ct2"))]
         assert!(
             !names.contains(&"ctranslate2"),
-            "CTranslate2 未实现，不应出现在可选列表中"
+            "ct2 feature 未启用时，CTranslate2 不应出现在可选列表中"
+        );
+        #[cfg(feature = "ct2")]
+        assert!(
+            names.contains(&"ctranslate2"),
+            "启用 ct2 feature 后，CTranslate2 加速后端应出现在可选列表中"
         );
     }
 }

@@ -6,7 +6,7 @@ use sherpa_onnx::{
     OfflineRecognizer, OfflineRecognizerConfig,
 };
 use votex_domain::asr::provider::AsrProvider;
-use votex_domain::asr::value_object::{AsrParams, RecognizeOutput, WordTimestamp};
+use votex_domain::asr::value_object::{AsrParams, RecognizeOutput};
 use votex_domain::error::AsrError;
 use votex_domain::model::entity::Model;
 use votex_domain::model::value_object::EngineKind;
@@ -180,21 +180,12 @@ impl AsrProvider for FireRedAsrCtcProvider {
             result.text.len()
         );
 
-        // 将整段文本作为一个时间戳项
-        let word_timestamps = if result.text.is_empty() {
-            Vec::new()
-        } else {
-            vec![WordTimestamp {
-                word: result.text.clone(),
-                start_ms: 0.0,
-                end_ms: 0.0,
-            }]
-        };
-
-        Ok(RecognizeOutput {
-            text: result.text,
-            word_timestamps,
-        })
+        // 统一走公共组装：CTC 类模型带 token 时间戳时产出词级，否则伪整段
+        Ok(super::recognize_output_from(
+            result.text,
+            &result.tokens,
+            result.timestamps.as_deref(),
+        ))
     }
 
     fn sample_rate(&self) -> u32 {
@@ -384,21 +375,12 @@ impl AsrProvider for FireRedAsrAedProvider {
             result.text.len()
         );
 
-        // 将整段文本作为一个时间戳项
-        let word_timestamps = if result.text.is_empty() {
-            Vec::new()
-        } else {
-            vec![WordTimestamp {
-                word: result.text.clone(),
-                start_ms: 0.0,
-                end_ms: 0.0,
-            }]
-        };
-
-        Ok(RecognizeOutput {
-            text: result.text,
-            word_timestamps,
-        })
+        // 统一走公共组装：CTC 类模型带 token 时间戳时产出词级，否则伪整段
+        Ok(super::recognize_output_from(
+            result.text,
+            &result.tokens,
+            result.timestamps.as_deref(),
+        ))
     }
 
     fn sample_rate(&self) -> u32 {

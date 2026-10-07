@@ -1,0 +1,71 @@
+# ===== 构建产物 =====
+/target/
+
+# ===== 模型与运行时资产（35G+，不入库，另行分发） =====
+# 只忽略模型权重与 ONNX Runtime 动态库；**清单定义必须入库**，
+# 否则 clone 仓库后没有 models/registry/*.yaml，模型列表为空、无法下载，
+# 且已回填的 SHA256 会随本地文件一起丢失（详见 docs/23 审查报告）。
+/models/*
+!/models/registry/
+
+# ===== 测试与临时产物 =====
+/tmp/*
+# 标准测试素材（集成测试硬依赖，见 docs/20 §2.6 / CHANGELOG 测试素材基准）
+!/tmp/e2e_ch1.txt
+!/tmp/novel.txt
+
+# ===== 资源与运行数据 =====
+/resource/
+/data/
+/logs/
+output/
+
+# ===== 密钥与证书 =====
+.key
+*.key
+*.pem
+*.pfx
+*.p12
+
+# ===== 本地工具目录 =====
+/.workbuddy/
+/.codegraph/
+/.omo/
+/.agents/
+
+# ===== 系统文件 =====
+Thumbs.db
+.DS_Store
+crates/votex-infra/test_*.wav
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+node_modules/
+bower_components/
+jspm_packages/
+__pycache__/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

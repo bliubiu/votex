@@ -88,6 +88,25 @@ impl AsrPage {
                     }
                 });
                 ui.end_row();
+
+                ui.label("高级选项:");
+                ui.vertical(|ui| {
+                    ui.checkbox(&mut state.asr.word_timestamps, "词级时间戳对齐（精准字幕 + words.json）")
+                        .on_hover_text("引擎提供词级时间戳时，按词组句生成精准字幕并导出词级 JSON；不支持时自动回退切片级字幕");
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut state.asr.diarize, "说话人分离（说话人标注 + diarization.json）")
+                            .on_hover_text("识别后对全音频做说话人分离，为每条字幕标注「说话人N」");
+                        if state.asr.diarize {
+                            ui.add(
+                                egui::DragValue::new(&mut state.asr.num_speakers)
+                                    .range(0..=10)
+                                    .suffix(" 人"),
+                            )
+                            .on_hover_text("期望说话人数；0 = 按聚类阈值自动决定");
+                        }
+                    });
+                });
+                ui.end_row();
             });
         });
 
@@ -104,6 +123,9 @@ impl AsrPage {
                     let model = state.asr.model.clone();
                     let language = state.asr.language.clone();
                     let format = state.asr.format.clone();
+                    let word_timestamps = state.asr.word_timestamps;
+                    let diarize = state.asr.diarize;
+                    let num_speakers = state.asr.num_speakers;
                     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
                     state.asr.is_running = true;
@@ -117,7 +139,10 @@ impl AsrPage {
                     // 后台识别仍会跑完。
                     state.asr.cancel_token = Some(cancel.clone());
 
-                    task_runner::spawn_asr(tx, input_path, output_path, model, language, format, cancel);
+                    task_runner::spawn_asr(
+                        tx, input_path, output_path, model, language, format,
+                        word_timestamps, diarize, num_speakers, cancel,
+                    );
                 }
 
                 if state.asr.is_running {

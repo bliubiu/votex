@@ -62,10 +62,21 @@ impl IndexTts25Provider {
     }
 
     /// voice id → 参考音频路径
+    ///
+    /// 查找顺序：引擎自带 `prompts/<id>.wav` → 统一音色库
+    /// `models/voices/refs/<id>.wav`（`voice add` 入库音色，两个引擎共用，
+    /// 免去手动复制 wav 到 prompts/ 目录）。
     fn prompt_path(&self, voice_id: &str) -> PathBuf {
-        Self::model_base_dir()
+        let builtin = Self::model_base_dir()
             .join(PROMPTS_DIR)
-            .join(format!("{voice_id}.wav"))
+            .join(format!("{voice_id}.wav"));
+        if builtin.is_file() {
+            return builtin;
+        }
+        if let Ok(lib_ref) = crate::tts::voice_library::reference_path(voice_id) {
+            return lib_ref;
+        }
+        builtin
     }
 
     /// 加载（或取缓存）指定音色的 speaker 上下文
@@ -77,8 +88,9 @@ impl IndexTts25Provider {
         let prompt = self.prompt_path(voice_id);
         if !prompt.is_file() {
             return Err(TtsError::UnsupportedVoice(format!(
-                "参考音频不存在: {:?}（请放置 15s 内清晰人声 wav 到 prompts/ 目录）",
-                prompt
+                "音色 '{}' 不存在（可经 `voice add --reference <wav>` 入库，\
+                 或放置 15s 内清晰人声 wav 到 prompts/ 目录）",
+                voice_id
             )));
         }
 
@@ -158,6 +170,10 @@ impl TtsProvider for IndexTts25Provider {
         voice: &VoiceId,
         params: &TtsParams,
     ) -> Result<AudioData, TtsError> {
+        // 情感参数能力边界：IndexTTS-2.5 无情感 token（不支持语种 token 会越界）
+        static EMOTION_WARN: crate::tts::EmotionWarnOnce = crate::tts::EmotionWarnOnce::new();
+        EMOTION_WARN.warn_if_unsupported("IndexTTS-2.5", params);
+
         if !self.engines.is_loaded() {
             return Err(TtsError::EngineNotLoaded);
         }
@@ -185,6 +201,7 @@ impl TtsProvider for IndexTts25Provider {
     fn list_voices(&self) -> Vec<VoiceId> {
         let prompts = Self::model_base_dir().join(PROMPTS_DIR);
         let mut voices = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&prompts) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -194,8 +211,18 @@ impl TtsProvider for IndexTts25Provider {
                         .and_then(|s| s.to_str())
                         .unwrap_or_default()
                         .to_string();
-                    voices.push(VoiceId::new(&id, &id, EngineKind::IndexTTS25));
+                    if !seen.contains(&id) {
+                        seen.push(id.clone());
+                        voices.push(VoiceId::new(&id, &id, EngineKind::IndexTTS25));
+                    }
                 }
+            }
+        }
+        // 统一音色库（voice add 入库）对 IndexTTS-2.5 同样可用
+        for meta in crate::tts::voice_library::list() {
+            if !seen.contains(&meta.name) {
+                seen.push(meta.name.clone());
+                voices.push(VoiceId::new(&meta.name, &meta.name, EngineKind::IndexTTS25));
             }
         }
         voices.sort_by(|a, b| a.id.cmp(&b.id));

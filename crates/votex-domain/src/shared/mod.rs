@@ -3,3 +3,4 @@
 //! `thiserror` 定义的统一错误体系在此，其他领域的错误均由此扩展。
 
 pub mod value_object;
+pub mod diagnosis;

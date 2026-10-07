@@ -74,6 +74,168 @@ impl VoiceId {
     }
 }
 
+/// 音色性别/年龄段（多角色配音自动分配用）
+///
+/// 设计背景：此前代码靠`zf_` / `zm_` / `xf_` **字符串前缀**隐式推断性别，
+/// 这在`xf_child`（童声）上就打破了 zm/zf 二分——女声/男声之外还需要第三类。
+/// 多角色场景需要按性别分池筛选（见`role::extract_role_candidates`），
+/// 故显式建模。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoiceGender {
+    /// 男声
+    Male,
+    /// 女声
+    Female,
+    /// 童声（未成年角色）
+    Child,
+    /// 中性/不区分（英文音色、克隆音色等）
+    Neutral,
+}
+
+impl VoiceGender {
+    pub fn display_cn(&self) -> &'static str {
+        match self {
+            VoiceGender::Male => "男声",
+            VoiceGender::Female => "女声",
+            VoiceGender::Child => "童声",
+            VoiceGender::Neutral => "中性",
+        }
+    }
+
+    /// 按音色 ID 前缀推断性别（既有命名约定的唯一收口点）
+    ///
+    /// 中文：`zf_`=女声、`zm_`=男声、`xf_`=童声；
+    /// 英文：`af_`/`bf_`=女声、`am_`/`bm_`=男声；
+    /// `default` 及克隆音色等其余取值一律 `Neutral`。
+    ///
+    /// 此前各引擎（Kokoro `list_voices`、GUI 下拉）各自写了一份前缀判断，
+    /// 此处收口为**唯一实现**，避免新增引擎时漏改。克隆音色走`Neutral`——
+    /// 它们没有命名约定可言，应视为可用但不参与性别分池。
+    pub fn from_voice_id(id: &str) -> Self {
+        let lower = id.to_ascii_lowercase();
+        if lower.starts_with("zf_") || lower.starts_with("af_") || lower.starts_with("bf_") {
+            VoiceGender::Female
+        } else if lower.starts_with("zm_") || lower.starts_with("am_") || lower.starts_with("bm_") {
+            VoiceGender::Male
+        } else if lower.starts_with("xf_") {
+            VoiceGender::Child
+        } else {
+            VoiceGender::Neutral
+        }
+    }
+}
+
+/// 音色语种（自动分配时中文场景须优先选中文音色）
+///
+/// 真实 Kokoro 池 114 个音色中，英文音色（`af_`/`am_`/`bf_`/`bm_`）共 3~4 个，
+/// 按性别筛选时会**字典序排在 `zf_`/`zm_` 之前**（'a' < 'z'）。
+/// 若不区分语种，中文小说的旁白会被分到英文音色——E2E 实测出
+/// `narrator=af_maple`，故按语种显式定优先级。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoiceLocale {
+    /// 中文音色（`zf_` / `zm_` / `xf_`）
+    Chinese,
+    /// 英文音色（`af_` / `am_` / `bf_` / `bm_`）
+    English,
+    /// 克隆音色等无前缀约定者
+    Unknown,
+}
+
+impl VoiceLocale {
+    /// 按音色 ID 前缀推断语种
+    pub fn from_voice_id(id: &str) -> Self {
+        let lower = id.to_ascii_lowercase();
+        if lower.starts_with("zf_") || lower.starts_with("zm_") || lower.starts_with("xf_") {
+            VoiceLocale::Chinese
+        } else if lower.starts_with("af_")
+            || lower.starts_with("am_")
+            || lower.starts_with("bf_")
+            || lower.starts_with("bm_")
+        {
+            VoiceLocale::English
+        } else {
+            VoiceLocale::Unknown
+        }
+    }
+}
+
+/// 音色元数据（音色池条目）
+///
+/// 附加在既有 `VoiceId` 之上，供 GUI 下拉与多角色自动分配共用。
+/// **`voice_id` 字段与原有音色串完全一致，向后兼容。**
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoiceMeta {
+    /// 音色 ID（与引擎合成接口的入参一致）
+    pub voice_id: String,
+    /// GUI 展示名（如「晓晓-女声」）
+    pub display_name: String,
+    /// 归属引擎
+    pub engine: EngineKind,
+    /// 性别/年龄段
+    pub gender: VoiceGender,
+    /// 语种（自动分配时中文场景须优先选中文音色）
+    pub locale: VoiceLocale,
+}
+
+impl VoiceMeta {
+    pub fn new(voice_id: &str, display_name: &str, engine: EngineKind, gender: VoiceGender) -> Self {
+        let locale = VoiceLocale::from_voice_id(voice_id);
+        Self {
+            voice_id: voice_id.to_string(),
+            display_name: display_name.to_string(),
+            engine,
+            gender,
+            locale,
+        }
+    }
+
+    /// 从既有 `VoiceId` + 性别构造
+    pub fn from_voice_id(voice: VoiceId, gender: VoiceGender) -> Self {
+        let locale = VoiceLocale::from_voice_id(&voice.id);
+        Self {
+            voice_id: voice.id,
+            display_name: voice.display_name,
+            engine: voice.engine,
+            gender,
+            locale,
+        }
+    }
+
+    /// 按性别筛选音色池
+    pub fn filter_by_gender(voices: &[VoiceMeta], gender: VoiceGender) -> Vec<&VoiceMeta> {
+        voices.iter().filter(|v| v.gender == gender).collect()
+    }
+
+    /// 取该性别下的第一个音色（自动分配用；该性别无音色时返回 None）
+    pub fn pick_by_gender(voices: &[VoiceMeta], gender: VoiceGender) -> Option<&VoiceMeta> {
+        voices.iter().find(|v| v.gender == gender)
+    }
+
+    /// 按性别 + 语种取音色：中文场景优先中文音色，无中文音色时才退到英文
+    ///
+    /// 组合顺序：`中文+该性别` → `英文+该性别` → `无约定语种+该性别`。
+    /// 该回退顺序保证「宁可英文音色，也不要让段落无音色」。
+    pub fn pick_for_chinese(voices: &[VoiceMeta], gender: VoiceGender) -> Option<&VoiceMeta> {
+        [VoiceLocale::Chinese, VoiceLocale::English, VoiceLocale::Unknown]
+            .iter()
+            .find_map(|loc| voices.iter().find(|v| v.gender == gender && v.locale == *loc))
+    }
+
+    /// 中文场景的通用选音：先按指定性别，再依次退男声 / 童声 / 中性
+    ///
+    /// 用于「必须有音色」的兜底位置（旁白、未识别性别的角色）。
+    pub fn pick_any_for_chinese(voices: &[VoiceMeta], gender: VoiceGender) -> Option<&VoiceMeta> {
+        [
+            gender,
+            VoiceGender::Male,
+            VoiceGender::Child,
+            VoiceGender::Neutral,
+        ]
+        .iter()
+        .find_map(|g| VoiceMeta::pick_for_chinese(voices, *g))
+    }
+}
+
 /// 语速（0.5~2.0）
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Speed(f32);

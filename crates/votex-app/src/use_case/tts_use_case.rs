@@ -301,6 +301,18 @@ impl TtsUseCase {
         }
     }
 
+    /// 列出各本地 TTS 引擎的能力描述（不加载模型）
+    ///
+    /// 供 `votex model list --json` 与 `votex serve` 的程序化发现复用。
+    pub fn capabilities(&self) -> Vec<votex_domain::model::capability::EngineCapability> {
+        vec![
+            self.kokoro.capability(),
+            self.indextts25.capability(),
+            self.qwen3tts.capability(),
+            self.cosyvoice.capability(),
+        ]
+    }
+
     /// 执行 TTS 合成（兼容旧签名，不可取消、无断点续转）
     ///
     /// `model_override` — 可选，强制使用指定模型 ID（如 "qwen3-tts-0.6b"）。
@@ -616,16 +628,24 @@ impl TtsUseCase {
 
     fn find_voice(&self, engine: EngineKind, voice_id: &str) -> Result<VoiceId> {
         let provider = self.get_provider(engine)?;
-        for voice in provider.list_voices() {
+        let voices = provider.list_voices();
+        for voice in &voices {
             if voice.id == voice_id {
-                return Ok(voice);
+                return Ok(voice.clone());
             }
         }
-        let voices = provider.list_voices();
-        voices
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("no voice found for engine {:?}", engine))
+        // 未命中必须报错而不是静默回退第一个音色——音色名写错（多角色
+        // 映射表/手输）时用户应当收到明确提示，而不是"用别的声音合成了"
+        let mut hint: Vec<String> = voices.iter().take(10).map(|v| v.id.clone()).collect();
+        if voices.len() > hint.len() {
+            hint.push(format!("…共 {} 个", voices.len()));
+        }
+        anyhow::bail!(
+            "音色 '{}' 不存在于引擎 {:?}，可用音色: [{}]",
+            voice_id,
+            engine,
+            hint.join(", ")
+        )
     }
 
     /// 释放指定 TTS 引擎已加载的模型会话（真实释放内存）
@@ -993,6 +1013,22 @@ impl Streamer {
 #[cfg(test)]
 mod stream_path_tests {
     use super::*;
+
+    #[test]
+    fn 音色查找_未命中报错并列出可用音色() {
+        // 回归 A3：此前未命中时静默回退第一个音色，音色名写错
+        // （多角色映射/手输）只会"用别的声音合成"，用户无从察觉。
+        // Qwen3Tts 的 list_voices 无需加载模型（静态预设表）。
+        let uc = TtsUseCase::new();
+
+        let hit = uc.find_voice(EngineKind::Qwen3Tts, "default");
+        assert!(hit.is_ok(), "预设音色应命中");
+
+        let err = uc.find_voice(EngineKind::Qwen3Tts, "写错的音色").unwrap_err();
+        let msg = format!("{}", err);
+        assert!(msg.contains("写错的音色"), "错误应包含请求的音色名: {msg}");
+        assert!(msg.contains("default"), "错误应列出可用音色: {msg}");
+    }
 
     #[test]
     fn 临时路径_不重复追加扩展名() {

@@ -11,6 +11,10 @@ directml = ["ort/directml"]
 # 默认跳过（回归基线 61 秒），跑法：
 #   cargo test -p votex-infra --features slow-models
 slow-models = []
+# CTranslate2 翻译加速后端（默认关闭：开启后 ct2rs 会 vendor 模式
+# 从源码编译 CTranslate2 C++ 库，需 CMake + MSVC + ninja，首次约 10-20 分钟；
+# Windows 构建还需 RUSTFLAGS=-C target-feature=+crt-static）
+ct2 = ["dep:ct2rs"]
 
 [dependencies]
 votex-domain = { workspace = true }
@@ -44,6 +48,10 @@ flate2 = "1.1"
 bzip2 = "0.5"
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
 sherpa-onnx = "1.13"
+# 实时听写麦克风采集（cpal 已在 GUI 的 rodio 依赖树中，统一版本复用）
+cpal = "0.15"
+# 音频采样格式转换所需 trait（to_f32 等）
+num-traits = "0.2"
 pinyin = { version = "0.11", features = ["with_tone_num_end"] }
 regex = { workspace = true }
 # IndexTTS-2.5 文本前端：PAT_STR 含 (?!\S) 负向前瞻，regex crate 不支持，需 fancy-regex
@@ -58,7 +66,12 @@ aes-gcm = { workspace = true }
 base64 = { workspace = true }
 hmac = { workspace = true }
 sha1 = { workspace = true }
-libloading = "0.8"
+# CTranslate2 Rust 绑定（jkawamoto/ctranslate2-rs，仅 --features ct2 时编译）：
+# ruy 纯 CPU 矩阵库（无 BLAS 外部依赖）。
+# ⚠️ 不启用 sentencepiece feature：其 C++ sentencepiece-sys 内嵌 protobuf，
+#    与 sherpa-onnx-sys 的 protobuf 在同一二进制静态链接时 LNK2005 冲突；
+#    改用本仓库纯 Rust SentencePieceBpe 实现 ct2rs::Tokenizer（见 imp_enabled.rs）。
+ct2rs = { version = "0.10", optional = true, default-features = false, features = ["ruy"] }
 half = { workspace = true }
 memmap2 = "0.9"
 zip = { workspace = true }
@@ -68,3 +81,4 @@ pdf-extract = { workspace = true }
 [dev-dependencies]
 tempfile = "3"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+votex-app = { path = "../votex-app" }

@@ -3,6 +3,8 @@ use eframe::egui;
 use crate::pages::dashboard::DashboardPage;
 use crate::pages::tts_page::TtsPage;
 use crate::pages::asr_page::AsrPage;
+use crate::pages::dictation_page::DictationPage;
+use crate::pages::voices_page::VoicesPage;
 use crate::pages::ocr_page::OcrPage;
 use crate::pages::translation_page::TranslationPage;
 use crate::pages::batch_page::BatchPage;
@@ -22,6 +24,8 @@ const NAV_GROUPS: &[(&str, &[(crate::state::Page, &str, &str)])] = &[
     ("语音处理", &[
         (crate::state::Page::Tts, "▷", "语音合成"),
         (crate::state::Page::Asr, "♪", "语音识别"),
+        (crate::state::Page::Dictation, "◉", "实时听写"),
+        (crate::state::Page::Voices, "◈", "音色库"),
     ]),
     ("文档处理", &[
         (crate::state::Page::Ocr, "◎", "图文识别"),
@@ -402,6 +406,12 @@ impl eframe::App for VotexApp {
                     }
                     crate::state::Page::Asr => {
                         AsrPage::show(ui, &mut self.state);
+                    }
+                    crate::state::Page::Dictation => {
+                        DictationPage::show(ui, &mut self.state);
+                    }
+                    crate::state::Page::Voices => {
+                        VoicesPage::show(ui, &mut self.state);
                     }
                     crate::state::Page::Ocr => {
                         OcrPage::show(ui, &mut self.state);

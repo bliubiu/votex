@@ -112,6 +112,14 @@ impl Timestamp {
         }
     }
 
+    /// 转回总毫秒数（与 [`Timestamp::from_millis`] 互逆）
+    pub fn to_millis(&self) -> u64 {
+        self.hours as u64 * 3_600_000
+            + self.minutes as u64 * 60_000
+            + self.seconds as u64 * 1000
+            + self.millis as u64
+    }
+
     /// SRT 时间格式：HH:MM:SS,mmm
     pub fn to_srt_format(&self) -> String {
         format!(
@@ -139,6 +147,27 @@ pub struct SubtitleEntry {
     pub start_time: Timestamp,
     pub end_time: Timestamp,
     pub text: String,
+    /// 说话人编号（0 起，说话人分离后标注；None = 未做分离）
+    #[serde(default)]
+    pub speaker: Option<usize>,
+}
+
+impl SubtitleEntry {
+    /// 无说话人标注的普通条目
+    pub fn new(index: usize, start_ms: u64, end_ms: u64, text: impl Into<String>) -> Self {
+        Self {
+            index,
+            start_time: Timestamp::from_millis(start_ms),
+            end_time: Timestamp::from_millis(end_ms),
+            text: text.into(),
+            speaker: None,
+        }
+    }
+
+    /// 说话人显示名（"说话人1" 起）；未标注返回 None
+    pub fn speaker_label(&self) -> Option<String> {
+        self.speaker.map(|s| format!("说话人{}", s + 1))
+    }
 }
 
 /// ASR 识别结果

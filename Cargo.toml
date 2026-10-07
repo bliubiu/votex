@@ -17,9 +17,15 @@ edition.workspace = true
 name = "votex"
 path = "src/main.rs"
 
+[features]
+# 转发到 votex-infra：cargo build --features ct2 启用 CTranslate2 加速翻译后端
+ct2 = ["votex-infra/ct2"]
+
 [dependencies]
 votex-cli = { workspace = true }
 votex-gui = { workspace = true }
+# 仅用于 feature 转发（ct2 feature → votex-infra/ct2），bin 本身不直接使用
+votex-infra = { workspace = true }
 anyhow = { workspace = true }
 ort = { version = "2.0.0-rc.13", features = ["ndarray", "directml", "load-dynamic"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -79,6 +85,10 @@ chrono = "0.4"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+
+# 本地服务（`votex serve`）：轻量阻塞式 HTTP 服务器，无异步运行时依赖，
+# 契合「单二进制分发、体积优先」约束
+tiny_http = "0.12"
 
 # GUI
 eframe = "0.31"

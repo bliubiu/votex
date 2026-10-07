@@ -33,7 +33,7 @@ impl SubtitleWriter {
                     e.index,
                     e.start_time.to_srt_format(),
                     e.end_time.to_srt_format(),
-                    e.text
+                    Self::decorate_text(e)
                 )
             })
             .collect::<Vec<_>>()
@@ -53,9 +53,17 @@ impl SubtitleWriter {
     pub fn to_txt(entries: &[SubtitleEntry]) -> String {
         entries
             .iter()
-            .map(|e| e.text.as_str())
+            .map(|e| Self::decorate_text(e))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// 条目文本 + 说话人标注前缀（SRT/TXT 输出；LRC 为歌词场景不标）
+    fn decorate_text(e: &SubtitleEntry) -> String {
+        match e.speaker_label() {
+            Some(label) => format!("[{}] {}", label, e.text),
+            None => e.text.clone(),
+        }
     }
 }
 
@@ -71,12 +79,14 @@ mod tests {
                 start_time: Timestamp::from_millis(0),
                 end_time: Timestamp::from_millis(3000),
                 text: "你好世界".to_string(),
+                speaker: None,
             },
             SubtitleEntry {
                 index: 2,
                 start_time: Timestamp::from_millis(3000),
                 end_time: Timestamp::from_millis(6500),
                 text: "这是声阅".to_string(),
+                speaker: Some(0),
             },
         ]
     }
@@ -105,6 +115,17 @@ mod tests {
         assert!(txt.contains("你好世界"));
         assert!(txt.contains("这是声阅"));
         assert!(!txt.contains("-->"));
+    }
+
+    #[test]
+    fn to_srt_说话人标注前缀() {
+        // 样例第 2 条带 speaker: Some(0) → SRT/TXT 输出须带 [说话人1] 前缀
+        let srt = SubtitleWriter::to_srt(&sample_entries());
+        assert!(srt.contains("[说话人1] 这是声阅"));
+        assert!(!srt.contains("[说话人1] 你好世界"));
+
+        let txt = SubtitleWriter::to_txt(&sample_entries());
+        assert!(txt.contains("[说话人1] 这是声阅"));
     }
 
     #[test]

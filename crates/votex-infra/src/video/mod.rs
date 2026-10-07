@@ -4,3 +4,5 @@
 
 pub mod composer;
 pub mod material;
+#[cfg(feature = "ffmpeg")]
+pub mod dub_ops;

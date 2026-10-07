@@ -136,6 +136,9 @@ pub fn spawn_tts(
 }
 
 /// 启动 ASR 识别任务
+///
+/// `word_timestamps` — 词级时间戳对齐（精准字幕 + words.json）
+/// `diarize` / `num_speakers` — 说话人分离（说话人标注字幕 + diarization.json）
 pub fn spawn_asr(
     tx: mpsc::Sender<(Page, TaskEvent)>,
     input_path: String,
@@ -143,6 +146,9 @@ pub fn spawn_asr(
     model: String,
     language: String,
     format: String,
+    word_timestamps: bool,
+    diarize: bool,
+    num_speakers: u32,
     cancel_token: Arc<std::sync::atomic::AtomicBool>,
 ) {
     std::thread::spawn(move || {
@@ -167,19 +173,37 @@ pub fn spawn_asr(
             message: "正在识别...".to_string(),
         }));
 
-        let result = asr.recognize(
+        let options = votex_app::use_case::asr_use_case::AsrRunOptions {
+            word_timestamps,
+            diarize,
+            num_speakers,
+            ..Default::default()
+        };
+
+        let run = asr.recognize_ex(
             Path::new(&input_path),
             Path::new(&output_path),
             &model,
             &language,
             &format,
+            &options,
             Some(cancel_token.as_ref()),
         );
 
-        match result {
-            Ok(asr_result) => {
+        match run {
+            Ok(run_result) => {
+                let mut message = format!("识别成功: {} 条字幕", run_result.result.subtitles.len());
+                if !run_result.word_timestamps.is_empty() {
+                    message.push_str(&format!(
+                        "，词级时间戳 {} 个词",
+                        run_result.word_timestamps.len()
+                    ));
+                }
+                if let Some(count) = run_result.speaker_count {
+                    message.push_str(&format!("，{} 个说话人", count));
+                }
                 let _ = tx.send((page, TaskEvent::Success {
-                    message: format!("识别成功: {} 条字幕", asr_result.subtitles.len()),
+                    message,
                     data: None,
                 }));
             }
@@ -647,6 +671,80 @@ pub fn spawn_video(
                 send_event(TaskEvent::Error {
                     message: format!("视频生成失败: {}", e),
                 });
+            }
+        }
+    });
+}
+
+/// 启动视频配音任务（ASR →（可选）翻译 → 逐段 TTS → 时长拟合 → 质检 → mux）
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_dub(
+    tx: mpsc::Sender<(Page, TaskEvent)>,
+    video_path: String,
+    output_dir: String,
+    asr_engine: String,
+    language: String,
+    tts_engine: String,
+    voice: String,
+    speed: f32,
+    translate: Option<String>,
+    translate_engine: String,
+    max_tempo: f32,
+    verify: bool,
+    keep_background: bool,
+    cancel_token: Option<Arc<std::sync::atomic::AtomicBool>>,
+) {
+    std::thread::spawn(move || {
+        let page = Page::Video;
+
+        let send_event = |evt: TaskEvent| {
+            let _ = tx.send((page, evt));
+        };
+
+        send_event(TaskEvent::Progress { current: 0, total: 1, message: "配音准备中...".to_string() });
+
+        let req = votex_app::use_case::video_dub_use_case::VideoDubRequest {
+            video_path,
+            asr_engine,
+            language,
+            tts_engine,
+            voice,
+            speed,
+            translate_direction: translate,
+            translate_engine,
+            max_tempo,
+            verify,
+            keep_background,
+        };
+
+        let tx_progress = tx.clone();
+        let use_case = votex_app::use_case::video_dub_use_case::VideoDubUseCase::new();
+        let result = use_case.execute(
+            &req,
+            std::path::Path::new(&output_dir),
+            Some(Box::new(move |_done, _total, msg| {
+                let _ = tx_progress.send((page, TaskEvent::Progress {
+                    current: 0,
+                    total: 1,
+                    message: msg.to_string(),
+                }));
+            })),
+            cancel_token,
+        );
+
+        match result {
+            Ok(resp) => {
+                let mut message = format!(
+                    "配音完成: {} 段 → {}\n配音音轨: {}\n配音字幕: {}",
+                    resp.segments, resp.output_video, resp.dubbed_audio, resp.subtitle_path
+                );
+                if let Some(score) = resp.verify_score {
+                    message.push_str(&format!("\n质检得分: {:.3}（>0.7 一般可接受）", score));
+                }
+                send_event(TaskEvent::Success { message, data: None });
+            }
+            Err(e) => {
+                send_event(TaskEvent::Error { message: format!("视频配音失败: {}", e) });
             }
         }
     });

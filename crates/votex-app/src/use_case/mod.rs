@@ -13,4 +13,9 @@ pub mod batch_tts_use_case;
 pub mod batch_asr_use_case;
 pub mod script_generate;
 pub mod video_generate;
+pub mod video_dub_use_case;
 pub mod translation_use_case;
+pub mod role_scan_use_case;
+pub mod capability_use_case;
+/// 实时/流式听写（麦克风 → 流式识别 → 增量文本）
+pub mod dictation_use_case;

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use std::path::Path;
 use std::sync::Arc;
+use votex_app::use_case::capability_use_case::CapabilityUseCase;
 use votex_app::use_case::model_use_case::ModelUseCase;
 use votex_domain::model::value_object::ModelId;
 use votex_app::platform::{download, registry};
@@ -22,7 +23,7 @@ pub fn handle(
     }
 
     match action {
-        ModelAction::List => list_models(models_dir, &registry_entries),
+        ModelAction::List { json } => list_models(models_dir, &registry_entries, *json),
         ModelAction::Download { model_id, mirror } => {
             download_model(model_id, mirror, models_dir, registry_entries, download_repo)
         }
@@ -34,7 +35,19 @@ pub fn handle(
     }
 }
 
-fn list_models(models_dir: &Path, registry: &[votex_domain::model::registry::ModelRegistryEntry]) -> Result<()> {
+fn list_models(
+    models_dir: &Path,
+    registry: &[votex_domain::model::registry::ModelRegistryEntry],
+    json: bool,
+) -> Result<()> {
+    // `--json`：输出结构化能力报告（模型可用性 + 引擎能力 + 音色池），
+    // 供脚本 / Agent 程序化发现，而非人类阅读表格。
+    if json {
+        let report = CapabilityUseCase::build(models_dir, registry.to_vec());
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
     let use_case = ModelUseCase::new(models_dir, registry.to_vec());
     let models = use_case.list_models();
 

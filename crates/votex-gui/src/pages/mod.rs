@@ -7,6 +7,9 @@
 pub mod dashboard;
 pub mod tts_page;
 pub mod asr_page;
+/// 实时听写（麦克风 → 流式识别）
+pub mod dictation_page;
+pub mod voices_page;
 pub mod ocr_page;
 pub mod translation_page;
 pub mod batch_page;

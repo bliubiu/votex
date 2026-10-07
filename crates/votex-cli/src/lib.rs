@@ -29,6 +29,7 @@
 //! 7. 解析子命令并执行
 
 pub mod commands;
+pub mod server;
 
 use anyhow::Result;
 use clap::Parser;
@@ -78,11 +79,19 @@ pub fn run() -> Result<RunMode> {
             Commands::Voice { action } => {
                 commands::voice::handle(&action)?;
             }
+            Commands::Role { action } => {
+                commands::role::handle(&action)?;
+            }
             Commands::Tts { input, output, engine, voice, speed, lang, model, session_dir, role_map, loudnorm, atempo } => {
                 commands::tts::handle(&input, &output, &engine, &voice, speed, lang, model, session_dir, role_map, loudnorm, atempo)?;
             }
-            Commands::Asr { input, output, model, format, lang } => {
-                commands::asr::handle(&input, &output, &model, &format, &lang)?;
+            Commands::Asr { input, output, model, format, lang, words, diarize, num_speakers } => {
+                commands::asr::handle_ex(
+                    &input, &output, &model, &format, &lang, words, diarize, num_speakers,
+                )?;
+            }
+            Commands::Dictate { model, output } => {
+                commands::dictate::handle(&model, output.as_deref())?;
             }
             Commands::Ocr { action } => {
                 handle_ocr(action, &models_dir, ctx.ocr_repo().cloned())?;
@@ -104,6 +113,12 @@ pub fn run() -> Result<RunMode> {
             }
             Commands::Video(cmd) => {
                 commands::video::handle(&cmd)?;
+            }
+            Commands::Dub { video, output, asr_engine, lang, engine, voice, speed, translate, translate_engine, max_tempo, verify, keep_background } => {
+                commands::dub::handle(
+                    &video, &output, &asr_engine, &lang, &engine, &voice, speed,
+                    translate.as_deref(), &translate_engine, max_tempo, verify, keep_background,
+                )?;
             }
             Commands::Translate {
                 text,
@@ -130,6 +145,9 @@ pub fn run() -> Result<RunMode> {
             }
             Commands::GlossaryInit { output } => {
                 commands::translate::write_glossary_template(&output)?;
+            }
+            Commands::Serve { host, port, api_key, workers } => {
+                commands::serve::handle(&host, port, api_key, workers, &models_dir)?;
             }
         }
     } else {

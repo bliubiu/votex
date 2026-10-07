@@ -32,6 +32,9 @@ output/
 /.codegraph/
 /.omo/
 /.agents/
+/.cache/
+/.sisyphus/
+/.trae/
 
 # ===== 系统文件 =====
 Thumbs.db
