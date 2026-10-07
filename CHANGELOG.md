@@ -3,6 +3,194 @@
 > 项目：声阅（votex）—— Rust 离线 TTS / ASR / 翻译 / OCR 多引擎工作台
 > 格式参考 Keep a Changelog；按日期倒序记录功能、修复与验证结论。
 
+## [2026-10-07] docs/27 P1 落地：克隆产品化闭环 + 视频配音流水线
+
+### P1-a 克隆产品化闭环（参考音频工程 + 音色库 GUI）
+- **参考音频工程**（`infra/audio/ref_audio.rs` 新模块）：
+  - `best_window`：按短时能量选「语音最多」的窗口——替代引擎侧静默截头；
+    `voice add` 新增 `--max-ref-seconds`（默认 15，0 = 不截取），超上限时
+    无转写自动截取、**有转写显式拒绝**（借鉴 VoiceStudio `clone_ref_too_long`
+    契约：截取窗口与转写无法对应，宁可拒绝不静默出错）
+  - `silence_ratio`：全静音参考入库直接拒绝（此前会静默产出失真音色）
+  - 元数据新增 `trimmed_from_ms` / `ref_strategy` 字段（serde default 向后兼容）
+- **IndexTTS-2.5 音色库打通**：参考音频查找顺序 `prompts/<id>.wav` →
+  统一音色库 `models/voices/refs/<id>.wav`；`list_voices` 合并两处并去重——
+  `voice add` 入库音色免手动复制即可用，音色未命中报错改指 `voice add`
+- **修复**：`voice_library::list()` 只认 `*.meta.json`（此前扫 `*.json`
+  会把目录里其他 JSON 误读成音色元数据）
+- **GUI 音色库页**（新页面「音色库」）：入库（选文件/命名/转写/降噪/上限）、
+  列表（时长/采样率/降噪/转写状态）、试听（复用播放器）、删除二次确认；
+  TTS 页音色下拉动态化——Kokoro 扫音色池、克隆引擎合并音色库列表
+  （无转写音色标注「仅 IndexTTS-2.5 可用」），替代此前硬编码 8 个音色
+
+### P1-b 视频配音流水线（含时长拟合、二次 ASR 质检）
+- **ffmpeg 原语**（`infra/video/dub_ops.rs` 新模块）：提取音轨（归一 24kHz
+  单声道）、WAV→WAV 变速（atempo 多级串联 0.25~4.0）、音轨替换/混入视频
+  （视频流 `-c:v copy` 不重编码；混音 amix normalize=0 保留各自增益）
+- **`VideoDubUseCase`**（`votex-app/use_case/video_dub_use_case.rs` 新用例）：
+  提取音轨 → ASR 转写 → 中文分句 + 按字数比例分配原时间轴 →（可选）
+  `translate_batch` 逐段翻译 → 逐段 TTS（段边界取消检查）→ **时长拟合**
+  （起点对齐原时间轴；超长段按 `max_tempo` 上限变速；前段溢出顺延不追赶）
+  → 流式拼装配音轨（`StreamingWav` 段间补静音）→ **用实测段时长重建字幕**
+  （非字数估算）→（可选）二次 ASR 质检（字符二元组相似度打分 + 质检报告）
+  → 音轨替换/混入视频。设计取舍：配音是段粒度操作，不硬塞现有
+  StageFn 文件粒度注册表，独立用例 + 阶段进度经 ProgressEvent 上报
+- **CLI `votex dub`**：全参数入口（--translate / --max-tempo / --verify /
+  --keep-background 等）
+- **GUI「视频工具」页**：模式切换「AI 短视频生成 / 视频配音」，配音模式
+  全参数表单 + 取消令牌（复用视频页事件通道）
+- **测试**：ref_audio 5 例、voice_library 入库截取/拒绝/过滤 4 例、
+  dub 用例分句/时间轴/拟合/相似度 8 例；infra 458 + app 135 全绿
+- **已知边界**：音频参数不一致的段会显式报错（同引擎恒定不受影响）；
+  视频减速 50/50 分摊（译制配音场景）留待后续；amix normalize=0 需
+  ffmpeg ≥ 4.4，老版本请用默认替换模式
+
+## [2026-10-07] VoiceStudio 对标分析（docs/27，合并版活文档）
+
+- 新增 `docs/27-VoiceStudio对标与借鉴分析.md`：对标开源全本地 ElevenLabs 替代品
+  VoiceStudio（Electron + Python，30+ 引擎），盘点功能与引擎矩阵差距。
+  两次对标调研已**合并为唯一活文档**（原 28 号对标分析并入后删除），
+  并对照代码库修正事实：OCR 实际为 PaddleOCR/EasyOCR（RapidOCR 仅评估测试）、
+  ASR 本地 6 引擎含 Whisper（FireRedASR v2 为同引擎 CTC 变体）、
+  sherpa-onnx 仅为 Paraformer 模型包换源来源而非运行时依赖、
+  WeNet 时间戳实测仅首尾正确；P0（serve/能力自描述）与 P1（克隆闭环/视频配音）
+  状态列标注落地情况。
+- 核心结论：不照搬其双运行时架构与碎片化引擎接入；可借鉴点按优先级排序——
+  ① 每引擎一页文档 + 新引擎准入门槛（沉淀 FunASR vocab_size 等教训），
+  ② 词级时间戳驱动的配音对齐（配音主链路已落地，此为对齐精度优化方向），
+  ③ inline 情感标记（[笑]/[停顿]）管线级支持，④ 有声书章级缓存键，
+  ⑤ `votex serve` 本地 API + 失败诊断脱敏面板，⑥ 悬浮窗听写（观察项）。
+- 差异化定位：不拼引擎数量（646 语言广度），拼中文听感与单二进制离线开箱即用。
+
+## [2026-10-06] TTS 能力缺口补全：情感接线 / CosyVoice 克隆音色发现 / 音色未命中报错
+
+### 情感参数接线（此前 `TtsParams.emotion` 被所有引擎忽略）
+- **Qwen3-TTS 1.7B（VoiceDesign）**：非 Neutral 的 emotion 生成英文指令语
+  追加到 instruct（`emotion_instruct_clause`，13 种情感各有措辞；
+  intensity ≥1.5 映射为 strongly 强化）——四引擎中唯一真实情感通道
+- **0.6B / Kokoro / CosyVoice / IndexTTS-2.5**：无情感控制通道（预设
+  embedding / 风格向量 / 参考音频条件 / 无情感 token），`EmotionWarnOnce`
+  每引擎进程内告警一次（长文本分段不刷屏），其余情况静默放行
+- 单测：指令语措辞与强度映射
+
+### CosyVoice 克隆音色发现与解析（此前 `_voice` 被完全忽略）
+- **list_voices**：default 之外返回克隆音色库（`models/voices/refs/`）
+  全部音色，标注是否含转写——GUI/CLI 音色下拉从此可见克隆音色
+  （对等性缺口：克隆音色库此前仅 CLI 管理、GUI 不可见）
+- **synthesize**：voice ≠ default 时从音色库解析参考音频 + 转写文本；
+  音色缺失/参考音频丢失/缺转写分别明确报错（CosyVoice 零样本克隆的
+  prompt 必须配套转写才能条件 LLM）
+- **voice_library**：`CloneVoiceMeta` 新增 `transcript` 字段（serde default
+  向后兼容），`add()` 接受转写，新增 `find_meta()`
+- **CLI**：`voice add --transcript "..."`；`voice list` 显示转写状态；
+  使用提示更新为 indextts25/cosyvoice3 双引擎
+
+### 音色未命中报错（审查 A3）
+- `find_voice` 未命中时不再静默回退第一个音色（"音色名写错 → 用别的
+  声音合成"），改为报错并列出可用音色（最多 10 个 + 总数）；
+  多角色映射未命中的既有回退路径（warn + 旁白音色）保持不变
+- 单测：命中/未命中报错信息含请求音色名与可用列表
+
+### 验证
+- `cargo test --workspace`：全绿（数字见文末提交记录）；clippy 零新增
+
+## [2026-10-06] 小说角色扫描 CLI（docs/26 模块一 S3）
+
+### 新增 `votex role` 子命令
+- **`role scan`**：从整本小说提取角色候选表，消除「读完全书手工统计说话人 +
+  手写 role_map JSON」的成本。支持 txt/md/epub/docx/pdf，**自动探测 GBK/UTF-8**
+  - `--top N` 候选上限（默认 20，按台词数降序）
+  - `--assign-voices` 自动分配音色，产出可直接喂给 `tts --role-map` 的映射表
+  - `--out` 保存 JSON、`--json` 输出机器可读格式、`--models-dir` 指定模型目录
+- **`role voices`**：按性别分组列出可用音色池
+- 终端输出为中文表格（角色/台词数/性别/已分配音色/**首段台词**），末行直接给出
+  后续合成命令；`--json` 供 GUI/脚本消费
+
+### 新增能力
+- **`kokoro::list_voice_pool(tts_models_dir)`**：枚举音色池**无需加载模型**，
+  仅扫 `voices/*.bin`。此前 `list_voices()` 要求 provider 已 `load_model()`，
+  角色扫描这类纯文本操作不该被迫加载 80M 模型
+- **`role_scan_use_case`**：扫描逻辑全部下沉到 app 层（CLI 分层约束：
+  业务逻辑不得写在命令里），GUI 角色页可直接复用
+- `voice_display_name` 把音色前缀知识收口为唯一实现——原 `list_voices` 内联的
+  6 分支 if 链已改为复用它，与 `VoiceGender`/`VoiceLocale` 的前缀推断合一
+
+### 修复：CLI 首轮真实书稿验证暴露的3 个问题
+- **噪声候选 `张重点头`(72 次)**：「张重**点头**没再问」——动作词不含助词，
+  原`MODIFIER_TAIL_CUT`拦不住。动作词表并入 `NAME_TAIL_NOISE_WORDS`
+  （词频取自真实语料：点头 1301 / 摇头 628 / 摆手 229 / 皱眉 71）
+- **12 个角色全部同一音色 `zm_009`**：真实书稿说话人几乎不带称谓线索
+  （12 个主要角色中**0 个**能定性），全落 `dialogue_default`。
+  新增 `neutral_rotation_pool`——**男女交错 + 同性别跳号(步长 8) 等距取样**，
+  保证不同角色听得出来不同（不做`i*STEP % len`绕回，那会产生重复项）
+- **中文小说被分到英文音色 `af_maple`**：轮转池只按 gender 过滤，
+  而英文音色字典序在 `zf_` 之前。改为**性别 + 语种**双条件过滤
+
+### 能力边界（已写入 docs/26）
+- 真实书稿的说话人**几乎不带称谓线索**，性别启发在小说文体上基本无效；
+  `suggested_gender` 仅作提示，自动分配的正确目标不是「性别正确」
+  而是「**声线可分辨**」。若书稿大量使用「爸爸」「爷爷」这类称谓（口语对话体），
+  性别启发才有效——CLI 输出以「待确认?男声」如实告知用户
+- CLI 报告 976ms（4.9MB GBK/ 1083 章）
+
+### 测试
+- `role_scan_use_case` 6 passed；`tts::role` 34 passed（新增3 个：轮转池/ 动作词剥离）
+- CLI clap 参数测试 3 个 + 子命令清单纳入 `cli_定义完整性`
+- 回归：domain 194 / app 123 / cli 47 / gui 40 全绿
+
+### 文档
+- `docs/02-CLI接口规范.md` 新增 §2.1「多角色配音：角色扫描命令」
+- `docs/26` 补S3 实施记录
+
+## [2026-10-06] 小说角色自动提取与音色自动分配（docs/26 模块一 S1+S2）
+
+### 新增能力
+- **`extract_role_candidates(text, top_n)`**：纯规则全书扫描角色候选（频次降序），
+  输出 `RoleCandidate { name, mentions, gender, suggested_gender, first_chapter, sample_line }`。
+  `sample_line` 为该角色**首段真实台词**，供 GUI 试听（用通用样句听不出音色是否贴合角色）。
+  4.9MB GBK 全本（1083 章）实测 **0.74s**，全部候选均带可试听台词
+- **`build_role_map(candidates, voices, assignments)`**：按「显式指定 → 性别+语种
+  匹配 → 兜底」三级策略自动生成 `RoleVoiceMap`，可直接喂给既有
+  `build_synthesis_plan`，自动生成的 role_map 覆盖全 53658 段的音色路由
+- **音色元数据** `VoiceGender` / `VoiceLocale` / `VoiceMeta`：`zf_`/`zm_`/`xf_`（中文）、
+  `af_`/`am_`/`bf_`/`bm_`（英文）前缀推断收口为**单一实现**，替代原先散落在
+  Kokoro `list_voices` 与 GUI 硬编码下拉中的三处重复判断。`voice_id` 字段与既有
+  音色串完全一致，**向后兼容**
+- 方案与实施记录：`docs/26-小说制作链路落地方案.md`
+
+### 修复：说话人识别噪声（真实全本暴露的既有缺陷）
+首轮 E2E Top5 为 `张重(682)/笑着(190)/张重笑着(133)/许雨涵(96)/笑呵呵地(79)`
+——**4/5 是噪声**。已修：
+- `MODIFIER_TAIL_CUT`（着/地/的/了）截断 `X说着` 类形态的修饰语
+- `VERB_TAIL_NOISE` 剥离截断后残留的动词字（`张重笑` → `张重`）
+- `ADVERB_ONLY_WORDS` 整串黑名单（`悄悄`/`慢慢` 等长度合法的纯副词绕得过长度保护）
+- `NAME_TAIL_NOISE_WORDS` 双字副词先剥离（`李经理赶忙` → `李经理`）
+- `NAME_TAIL_NOISE` 单字粘连副词（`张重又说` → `张重`，此前会拆成两条候选
+  并导致 `RoleVoiceMap` 匹配失效）
+- `looks_like_chapter_marker` 过滤章节编号（`第三章`/`第3章`/`第十二回`），
+  复用 `chapter::CHAPTER_UNITS`（提升为 `pub(crate)`）避免两处定义漂移
+- **修复后 Top5**：`张重(982)/许雨涵(124)/芃芃(88)/胡慧芳(87)/庄语(75)`，全为真实角色
+
+### 修复：音色分配的语种错配与丢失
+- **中文小说旁白被分到英文音色**：按性别筛选时 `af_` 字典序在 `zf_` 之前，
+  实测 `narrator=af_maple`。新增 `VoiceLocale` 并改为「性别+语种」二维选音
+- **台词段全丢音色**：真实 Kokoro 池 114 个音色中**无中性、无童声**，
+  原「取首个 Neutral」兜底返回 None，实测 **29006 段无音色**。改为逐级回退
+  `中性 → 男声 → 任意`，宁可中文男声也不留空
+
+### 能力边界（已写入文档）
+- **性别只能靠称谓确认**。叠字名（`芃芃`）等无称谓线索者 `gender` 恒为 `Neutral`；
+  `suggested_gender` 是频次弱先验推测，**不参与自动分配**——猜错性别会让全书
+  配音越听越违和，交由用户试听确认
+- **真实音色池无童声**（`xf_` 数量为 0，`xf_child` 仅存在于测试构造）。
+  童声角色须由用户在 GUI 指定克隆音色，或走 IndexTTS-2.5 零样本克隆
+
+### 测试
+- `tts::role` 31 passed（新增 20）；`tts::` 99 passed
+- `e2e_novel_parse.rs` 新增 4 个真实全本用例（8 passed），含性能（<2s）、
+  Top3 人名信噪比、中文音色断言、role_map 反序列化往返
+- 回归：domain 191 / app 117 全绿（无既有断言被破坏）
+
 ## [2026-10-06] Paraformer 换源 sherpa 官方包 + ASR 跨引擎交叉验证
 
 ### Paraformer（换源 + 正向识别打通）
